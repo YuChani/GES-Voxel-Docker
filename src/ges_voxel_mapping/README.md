@@ -265,6 +265,43 @@ python3 ./scripts/run_junction_mixed_scored_review.py \
   --junction-mixed-scored-threshold 0.66
 ```
 
+junction mixed scored multi-scene review/annotation export:
+
+```bash
+./scripts/build_offline.sh
+python3 ./scripts/run_junction_mixed_scored_multiscene_review.py \
+  --input-root ./prev/BALM/datas/benchmark_realworld \
+  --output-root ./results/context_refinement_scored_multiscene_review \
+  --voxel-size 1.0 \
+  --min-points-per-voxel 15 \
+  --shape-exponent 1.0 \
+  --axis-scale-quantile 0.95 \
+  --review-threshold 0.66 \
+  --top-k 200 \
+  --neighborhood-radius 2 \
+  --junction-mixed-min-neighbor-count 10 \
+  --junction-mixed-min-cluster-count 3 \
+  --junction-mixed-min-score 0.72 \
+  --junction-mixed-min-orientation-dispersion 0.48 \
+  --junction-mixed-max-dominant-fraction 0.38 \
+  --junction-mixed-min-occupancy-asymmetry 0.30 \
+  --junction-mixed-min-normal-variation 0.20 \
+  --junction-mixed-max-opposite-face-pair-ratio 0.67 \
+  --junction-mixed-scored-min-neighbor-count 8 \
+  --junction-mixed-scored-min-cluster-count 2 \
+  --junction-mixed-scored-min-junction-score 0.30 \
+  --junction-mixed-scored-min-orientation-dispersion 0.35 \
+  --junction-mixed-scored-max-dominant-fraction 0.62 \
+  --junction-mixed-scored-min-occupancy-asymmetry 0.18 \
+  --junction-mixed-scored-min-normal-variation 0.10 \
+  --junction-mixed-scored-threshold 0.66
+```
+
+기본 동작은 `full0.pcd`를 anchor로 사용하고, 같은 디렉터리의 `full*.pcd` 전체 point count를 읽어
+25% / 75% 분위수에 가까운 두 장면을 자동 선택합니다. 결과는
+`results/context_refinement_scored_multiscene_review/` 아래에 scene selection, per-scene review,
+group manifest, annotation template, cross-scene summary로 저장됩니다.
+
 ## ranking/filter mode
 
 - `score_only`

@@ -1,0 +1,1 @@
+/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/prev/BALM/datas/benchmark_realworld/full153.pcd | points=71823 | fields=x;y;z;intensity;normal_x;normal_y;normal_z;curvature | intensity=yes

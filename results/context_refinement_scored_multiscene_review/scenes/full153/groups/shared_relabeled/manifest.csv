@@ -1,0 +1,4 @@
+voxel_id,group,baseline_rank,hard_rank,scored_rank,voxel_pcd_path,neighborhood_pcd_path
+-3_9_-1,shared_relabeled,34,5,5,groups/shared_relabeled/voxels/-3_9_-1/voxel.pcd,groups/shared_relabeled/voxels/-3_9_-1/neighborhood_radius2.pcd
+-6_-1_5,shared_relabeled,93,24,20,groups/shared_relabeled/voxels/-6_-1_5/voxel.pcd,groups/shared_relabeled/voxels/-6_-1_5/neighborhood_radius2.pcd
+-3_9_0,shared_relabeled,,,189,groups/shared_relabeled/voxels/-3_9_0/voxel.pcd,groups/shared_relabeled/voxels/-3_9_0/neighborhood_radius2.pcd

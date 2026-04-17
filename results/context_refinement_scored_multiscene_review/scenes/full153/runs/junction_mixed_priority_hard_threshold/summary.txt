@@ -1,0 +1,69 @@
+input_points: 71823
+analyzed_voxels: 843
+input_mode: single
+voxel_size: 1.000000
+min_points_per_voxel: 15
+shape_exponent: 1.000000
+axis_scale_quantile: 0.950000
+ranking_mode: junction_mixed_priority
+enable_junction_mixed_relabel: true
+junction_mixed_relabel_mode: hard_threshold
+junction_mixed_min_neighbor_count: 10
+junction_mixed_min_cluster_count: 3
+junction_mixed_min_score: 0.720000
+junction_mixed_min_orientation_dispersion: 0.480000
+junction_mixed_max_dominant_fraction: 0.380000
+junction_mixed_min_occupancy_asymmetry: 0.300000
+junction_mixed_min_normal_variation: 0.200000
+junction_mixed_max_opposite_face_pair_ratio: 0.670000
+junction_mixed_scored_min_neighbor_count: 8
+junction_mixed_scored_min_cluster_count: 2
+junction_mixed_scored_min_junction_score: 0.300000
+junction_mixed_scored_min_orientation_dispersion: 0.350000
+junction_mixed_scored_max_dominant_fraction: 0.620000
+junction_mixed_scored_min_occupancy_asymmetry: 0.180000
+junction_mixed_scored_min_normal_variation: 0.100000
+junction_mixed_scored_threshold: 0.660000
+interesting_top_k: 200
+average_gaussian_center_advantage: -73.363499
+average_shell_center_penalty: 4.244283
+average_morphology_filter_penalty: 2.432033
+average_occupied_face_ratio: 0.460261
+average_opposite_face_pair_ratio: 0.251087
+average_normal_variation: 0.092935
+average_occupancy_asymmetry: 0.497691
+average_planar_context_penalty: 0.230897
+average_corner_context_bonus: 0.972488
+average_junction_cluster_count: 1.406880
+average_junction_entropy: 0.383906
+average_junction_dominant_fraction: 0.799143
+average_junction_orientation_dispersion: 0.354411
+average_junction_score: 0.113073
+average_junction_mixed_relabel_score: 0.261909
+average_junction_mixed_relabel_score_all_voxels: 0.261909
+average_planar_junction_mixed_relabel_score: 0.221273
+average_relabeled_junction_mixed_relabel_score: 0.882137
+average_topk_relabeled_junction_mixed_relabel_score: 0.903308
+junction_like_mixed_count: 3
+combined_corner_or_junction_count: 15
+planar_reduction_count: 3
+interesting_junction_like_mixed_count: 2
+interesting_combined_corner_or_junction_count: 14
+interesting_planar_reduction_count: 2
+base_label_counts:
+  corner_like: 12
+  linear: 248
+  planar: 580
+  volumetric: 3
+label_counts:
+  corner_like: 12
+  junction_like_mixed: 3
+  linear: 248
+  planar: 577
+  volumetric: 3
+interesting_label_counts:
+  corner_like: 12
+  junction_like_mixed: 2
+  linear: 45
+  planar: 138
+  volumetric: 3
