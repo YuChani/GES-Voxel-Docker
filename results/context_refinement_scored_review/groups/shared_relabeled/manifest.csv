@@ -1,0 +1,9 @@
+voxel_id,group,baseline_rank,hard_rank,scored_rank,voxel_pcd_path,neighborhood_pcd_path
+6_5_-1,shared_relabeled,71,12,12,groups/shared_relabeled/voxels/6_5_-1/voxel.pcd,groups/shared_relabeled/voxels/6_5_-1/neighborhood_radius2.pcd
+4_-13_4,shared_relabeled,89,17,14,groups/shared_relabeled/voxels/4_-13_4/voxel.pcd,groups/shared_relabeled/voxels/4_-13_4/neighborhood_radius2.pcd
+5_-13_4,shared_relabeled,98,19,15,groups/shared_relabeled/voxels/5_-13_4/voxel.pcd,groups/shared_relabeled/voxels/5_-13_4/neighborhood_radius2.pcd
+5_12_-1,shared_relabeled,,,,groups/shared_relabeled/voxels/5_12_-1/voxel.pcd,groups/shared_relabeled/voxels/5_12_-1/neighborhood_radius2.pcd
+5_13_-1,shared_relabeled,,,,groups/shared_relabeled/voxels/5_13_-1/voxel.pcd,groups/shared_relabeled/voxels/5_13_-1/neighborhood_radius2.pcd
+6_13_-1,shared_relabeled,,,,groups/shared_relabeled/voxels/6_13_-1/voxel.pcd,groups/shared_relabeled/voxels/6_13_-1/neighborhood_radius2.pcd
+6_13_1,shared_relabeled,,,,groups/shared_relabeled/voxels/6_13_1/voxel.pcd,groups/shared_relabeled/voxels/6_13_1/neighborhood_radius2.pcd
+6_5_-2,shared_relabeled,,,,groups/shared_relabeled/voxels/6_5_-2/voxel.pcd,groups/shared_relabeled/voxels/6_5_-2/neighborhood_radius2.pcd

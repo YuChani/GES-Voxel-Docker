@@ -49,6 +49,16 @@
     - `results/context_refinement_scored_calibration/scored_calibration_summary.md`
     - `results/context_refinement_scored_calibration/relabeled_voxel_review.csv`
     - `results/context_refinement_scored_calibration/relabeled_voxel_review.md`
+- `scripts/run_junction_mixed_scored_review.py`
+  - hard-threshold vs scored relabeled voxel의 review/export 전용 step
+  - per-run output: `results/context_refinement_scored_review/runs/<mode>/`
+  - group export:
+    - `results/context_refinement_scored_review/groups/shared_relabeled/`
+    - `results/context_refinement_scored_review/groups/scored_only_relabeled/`
+    - `results/context_refinement_scored_review/groups/hard_only_relabeled/`
+  - aggregate output:
+    - `results/context_refinement_scored_review/relabeled_review_summary.csv`
+    - `results/context_refinement_scored_review/relabeled_review_summary.md`
 
 ## 현재 primitive 구현 수준
 
@@ -221,6 +231,38 @@ python3 ./scripts/run_junction_mixed_scored_calibration.py \
   --junction-mixed-scored-min-normal-variation 0.10 \
   --junction-mixed-scored-threshold 0.66 \
   --top-k 200
+```
+
+junction mixed scored review/export:
+
+```bash
+./scripts/build_offline.sh
+python3 ./scripts/run_junction_mixed_scored_review.py \
+  --input ./prev/BALM/datas/benchmark_realworld/full0.pcd \
+  --output-root ./results/context_refinement_scored_review \
+  --voxel-size 1.0 \
+  --min-points-per-voxel 15 \
+  --shape-exponent 1.0 \
+  --axis-scale-quantile 0.95 \
+  --review-threshold 0.66 \
+  --top-k 200 \
+  --neighborhood-radius 2 \
+  --junction-mixed-min-neighbor-count 10 \
+  --junction-mixed-min-cluster-count 3 \
+  --junction-mixed-min-score 0.72 \
+  --junction-mixed-min-orientation-dispersion 0.48 \
+  --junction-mixed-max-dominant-fraction 0.38 \
+  --junction-mixed-min-occupancy-asymmetry 0.30 \
+  --junction-mixed-min-normal-variation 0.20 \
+  --junction-mixed-max-opposite-face-pair-ratio 0.67 \
+  --junction-mixed-scored-min-neighbor-count 8 \
+  --junction-mixed-scored-min-cluster-count 2 \
+  --junction-mixed-scored-min-junction-score 0.30 \
+  --junction-mixed-scored-min-orientation-dispersion 0.35 \
+  --junction-mixed-scored-max-dominant-fraction 0.62 \
+  --junction-mixed-scored-min-occupancy-asymmetry 0.18 \
+  --junction-mixed-scored-min-normal-variation 0.10 \
+  --junction-mixed-scored-threshold 0.66
 ```
 
 ## ranking/filter mode

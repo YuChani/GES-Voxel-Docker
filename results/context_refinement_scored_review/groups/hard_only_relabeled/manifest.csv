@@ -1,0 +1,3 @@
+voxel_id,group,baseline_rank,hard_rank,scored_rank,voxel_pcd_path,neighborhood_pcd_path
+6_12_0,hard_only_relabeled,,,,groups/hard_only_relabeled/voxels/6_12_0/voxel.pcd,groups/hard_only_relabeled/voxels/6_12_0/neighborhood_radius2.pcd
+6_12_1,hard_only_relabeled,,,,groups/hard_only_relabeled/voxels/6_12_1/voxel.pcd,groups/hard_only_relabeled/voxels/6_12_1/neighborhood_radius2.pcd
