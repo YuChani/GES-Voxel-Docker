@@ -35,6 +35,51 @@ std::string NormalizeMode(std::string mode)
   return mode;
 }
 
+std::string NormalizeRankingMode(std::string mode)
+{
+  for (char& ch : mode)
+  {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  if (mode.empty())
+  {
+    return "score_only";
+  }
+  if (
+    mode != "score_only" &&
+    mode != "corner_priority" &&
+    mode != "nonplanar_priority" &&
+    mode != "context_face_support" &&
+    mode != "context_normal_variation" &&
+    mode != "context_asymmetry" &&
+    mode != "context_hybrid")
+  {
+    throw std::runtime_error(
+      "Unsupported ranking mode: " + mode +
+      ". Use score_only|corner_priority|nonplanar_priority|context_face_support|"
+      "context_normal_variation|context_asymmetry|context_hybrid.");
+  }
+  return mode;
+}
+
+bool ParseBool(const std::string& text)
+{
+  std::string normalized = text;
+  for (char& ch : normalized)
+  {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  if (normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on")
+  {
+    return true;
+  }
+  if (normalized == "0" || normalized == "false" || normalized == "no" || normalized == "off")
+  {
+    return false;
+  }
+  throw std::runtime_error("Failed to parse boolean value: " + text);
+}
+
 std::string PackageConfigPath()
 {
   return kDefaultConfigPath;
@@ -61,10 +106,15 @@ void PrintUsage()
 {
   std::cout
     << "Usage: voxel_morphology_analyzer [--config <yaml>] --input <pcd|dir> [--output <dir>] [--mode auto|single|aggregate|batch]\n"
+    << "       [--voxel-size <float>] [--min-points-per-voxel <int>] [--shape-exponent <float>]\n"
+    << "       [--axis-scale-quantile <float>] [--ranking-mode <mode>] [--save-top-k <int>]\n"
+    << "       [--export-interesting-voxels <bool>] [--export-top-k-pcd <int>]\n"
     << "  auto      : file면 single, dir면 aggregate\n"
     << "  single    : 단일 PCD 하나 분석\n"
     << "  aggregate : 디렉토리의 PCD를 모두 누적해서 하나의 map처럼 분석\n"
-    << "  batch     : 디렉토리의 각 PCD를 개별 분석\n";
+    << "  batch     : 디렉토리의 각 PCD를 개별 분석\n"
+    << "  ranking   : score_only|corner_priority|nonplanar_priority|context_face_support|"
+       "context_normal_variation|context_asymmetry|context_hybrid\n";
 }
 
 void AnalyzeAndSave(
@@ -100,7 +150,22 @@ int main(int argc, char** argv)
     std::string input_override;
     std::string output_override;
     std::string mode_override;
+    std::string ranking_mode_override;
     bool output_overridden = false;
+    bool voxel_size_overridden = false;
+    bool min_points_overridden = false;
+    bool shape_exponent_overridden = false;
+    bool axis_scale_quantile_overridden = false;
+    bool save_top_k_overridden = false;
+    bool export_interesting_voxels_overridden = false;
+    bool export_top_k_pcd_overridden = false;
+    double voxel_size_override = 0.0;
+    int min_points_override = 0;
+    double shape_exponent_override = 0.0;
+    double axis_scale_quantile_override = 0.0;
+    int save_top_k_override = 0;
+    bool export_interesting_voxels_override = true;
+    int export_top_k_pcd_override = 0;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -131,6 +196,53 @@ int main(int argc, char** argv)
         mode_override = argv[++index];
         continue;
       }
+      if (arg == "--voxel-size" && index + 1 < argc)
+      {
+        voxel_size_override = std::stod(argv[++index]);
+        voxel_size_overridden = true;
+        continue;
+      }
+      if (arg == "--min-points-per-voxel" && index + 1 < argc)
+      {
+        min_points_override = std::stoi(argv[++index]);
+        min_points_overridden = true;
+        continue;
+      }
+      if (arg == "--shape-exponent" && index + 1 < argc)
+      {
+        shape_exponent_override = std::stod(argv[++index]);
+        shape_exponent_overridden = true;
+        continue;
+      }
+      if (arg == "--axis-scale-quantile" && index + 1 < argc)
+      {
+        axis_scale_quantile_override = std::stod(argv[++index]);
+        axis_scale_quantile_overridden = true;
+        continue;
+      }
+      if (arg == "--ranking-mode" && index + 1 < argc)
+      {
+        ranking_mode_override = argv[++index];
+        continue;
+      }
+      if (arg == "--save-top-k" && index + 1 < argc)
+      {
+        save_top_k_override = std::stoi(argv[++index]);
+        save_top_k_overridden = true;
+        continue;
+      }
+      if (arg == "--export-interesting-voxels" && index + 1 < argc)
+      {
+        export_interesting_voxels_override = ParseBool(argv[++index]);
+        export_interesting_voxels_overridden = true;
+        continue;
+      }
+      if (arg == "--export-top-k-pcd" && index + 1 < argc)
+      {
+        export_top_k_pcd_override = std::stoi(argv[++index]);
+        export_top_k_pcd_overridden = true;
+        continue;
+      }
 
       throw std::runtime_error("Unknown or incomplete argument: " + arg);
     }
@@ -148,8 +260,53 @@ int main(int argc, char** argv)
     {
       config.input_mode = mode_override;
     }
+    if (voxel_size_overridden)
+    {
+      config.voxel_size = voxel_size_override;
+    }
+    if (min_points_overridden)
+    {
+      config.min_points_per_voxel = min_points_override;
+    }
+    if (shape_exponent_overridden)
+    {
+      config.shape_exponent = shape_exponent_override;
+    }
+    if (axis_scale_quantile_overridden)
+    {
+      config.axis_scale_quantile = axis_scale_quantile_override;
+    }
+    if (!ranking_mode_override.empty())
+    {
+      config.ranking_mode = NormalizeRankingMode(ranking_mode_override);
+    }
+    if (save_top_k_overridden)
+    {
+      config.save_top_k = save_top_k_override;
+    }
+    if (export_interesting_voxels_overridden)
+    {
+      config.export_interesting_voxels = export_interesting_voxels_override;
+    }
+    if (export_top_k_pcd_overridden)
+    {
+      config.export_top_k_pcd = export_top_k_pcd_override;
+    }
 
     config.input_mode = NormalizeMode(config.input_mode);
+    config.ranking_mode = NormalizeRankingMode(config.ranking_mode);
+    if (config.voxel_size <= 0.0)
+    {
+      throw std::runtime_error("voxel_size must be positive");
+    }
+    if (config.min_points_per_voxel < 3)
+    {
+      throw std::runtime_error("min_points_per_voxel must be >= 3");
+    }
+    if (config.axis_scale_quantile < 0.0 || config.axis_scale_quantile > 1.0)
+    {
+      throw std::runtime_error("axis_scale_quantile must be in [0, 1]");
+    }
     if (config.input_path.empty())
     {
       throw std::runtime_error("input_path is empty. Pass --input <pcd|dir>.");

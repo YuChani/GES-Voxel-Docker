@@ -1,0 +1,28 @@
+input_points: 73452
+analyzed_voxels: 732
+input_mode: single
+voxel_size: 1.000000
+min_points_per_voxel: 15
+shape_exponent: 1.000000
+axis_scale_quantile: 0.950000
+ranking_mode: context_normal_variation
+interesting_top_k: 200
+average_gaussian_center_advantage: -43.827732
+average_shell_center_penalty: 3.075595
+average_morphology_filter_penalty: 2.269347
+average_occupied_face_ratio: 0.503188
+average_opposite_face_pair_ratio: 0.369308
+average_normal_variation: 0.107955
+average_occupancy_asymmetry: 0.363700
+average_planar_context_penalty: 0.264923
+average_corner_context_bonus: 0.798085
+label_counts:
+  corner_like: 33
+  linear: 249
+  planar: 444
+  volumetric: 6
+interesting_label_counts:
+  corner_like: 32
+  linear: 33
+  planar: 129
+  volumetric: 6

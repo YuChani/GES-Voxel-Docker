@@ -1,0 +1,22 @@
+input_points: 73452
+analyzed_voxels: 732
+input_mode: single
+voxel_size: 1.000000
+min_points_per_voxel: 15
+shape_exponent: 1.400000
+axis_scale_quantile: 0.850000
+ranking_mode: nonplanar_priority
+interesting_top_k: 200
+average_gaussian_center_advantage: -43.827732
+average_shell_center_penalty: 2.955042
+average_morphology_filter_penalty: 2.269347
+label_counts:
+  corner_like: 33
+  linear: 249
+  planar: 444
+  volumetric: 6
+interesting_label_counts:
+  corner_like: 32
+  linear: 31
+  planar: 131
+  volumetric: 6

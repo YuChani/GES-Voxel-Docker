@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -324,6 +325,260 @@ std::string FormatDouble(double value)
   return stream.str();
 }
 
+std::string NormalizeRankingMode(std::string mode)
+{
+  mode = ToLower(std::move(mode));
+  if (mode.empty())
+  {
+    return "score_only";
+  }
+  if (
+    mode != "score_only" &&
+    mode != "corner_priority" &&
+    mode != "nonplanar_priority" &&
+    mode != "context_face_support" &&
+    mode != "context_normal_variation" &&
+    mode != "context_asymmetry" &&
+    mode != "context_hybrid")
+  {
+    throw std::runtime_error(
+      "Unsupported ranking_mode: " + mode +
+      ". Use score_only|corner_priority|nonplanar_priority|context_face_support|"
+      "context_normal_variation|context_asymmetry|context_hybrid.");
+  }
+  return mode;
+}
+
+bool UsesCornerPriorityBase(const std::string& ranking_mode)
+{
+  return ranking_mode == "corner_priority";
+}
+
+double ComputeBaseInterestingScore(const VoxelMetrics& metric)
+{
+  return metric.gaussian.center_advantage + metric.shell.center_penalty;
+}
+
+double ComputeRankingAdjustment(const VoxelMetrics& metric, const std::string& ranking_mode)
+{
+  if (ranking_mode == "score_only")
+  {
+    return 0.0;
+  }
+
+  const bool use_corner_priority = UsesCornerPriorityBase(ranking_mode);
+  double label_bias = 0.0;
+  if (metric.stats.label == "corner_like")
+  {
+    label_bias = use_corner_priority ? 1.75 : 0.75;
+  }
+  else if (metric.stats.label == "volumetric")
+  {
+    label_bias = use_corner_priority ? 0.75 : 0.50;
+  }
+  else if (metric.stats.label == "planar")
+  {
+    label_bias = use_corner_priority ? -1.50 : -1.00;
+  }
+  else if (metric.stats.label == "linear")
+  {
+    label_bias = use_corner_priority ? -0.50 : -0.25;
+  }
+  else if (metric.stats.label == "degenerate")
+  {
+    label_bias = -2.00;
+  }
+
+  if (use_corner_priority)
+  {
+    return label_bias + 1.50 * metric.stats.scattering - 1.25 * metric.stats.planarity;
+  }
+
+  return label_bias + 2.25 * metric.stats.scattering - 1.75 * metric.stats.planarity;
+}
+
+double ComputeThinPlanarFilterPenalty(const VoxelMetrics& metric, const std::string& ranking_mode)
+{
+  if (ranking_mode == "score_only")
+  {
+    return 0.0;
+  }
+
+  const auto& stats = metric.stats;
+  double confidence = 0.0;
+  confidence += std::clamp((stats.planarity - 0.55) / 0.25, 0.0, 1.0);
+  confidence += std::clamp((0.14 - stats.scattering) / 0.08, 0.0, 1.0);
+  confidence += std::clamp((stats.anisotropy - 0.80) / 0.20, 0.0, 1.0);
+  confidence += std::clamp((0.10 - stats.omnivariance) / 0.08, 0.0, 1.0);
+  confidence += std::clamp((0.45 - stats.linearity) / 0.25, 0.0, 1.0);
+  confidence /= 5.0;
+
+  if (stats.label == "planar")
+  {
+    confidence *= 1.25;
+  }
+  else if (stats.label == "corner_like" || stats.label == "volumetric")
+  {
+    confidence *= 0.50;
+  }
+
+  const double strength = UsesCornerPriorityBase(ranking_mode) ? 1.5 : 3.0;
+  return strength * confidence;
+}
+
+VoxelKey OffsetVoxelKey(const VoxelKey& key, int dx, int dy, int dz)
+{
+  return VoxelKey{key.x + dx, key.y + dy, key.z + dz};
+}
+
+void ComputeContextMetrics(std::vector<VoxelMetrics>* metrics)
+{
+  if (metrics == nullptr || metrics->empty())
+  {
+    return;
+  }
+
+  std::unordered_map<VoxelKey, std::size_t, VoxelKeyHash> lookup;
+  lookup.reserve(metrics->size());
+  for (std::size_t index = 0; index < metrics->size(); ++index)
+  {
+    lookup[(*metrics)[index].key] = index;
+  }
+
+  constexpr int kFaceOffsets[6][3] = {
+    {1, 0, 0},
+    {-1, 0, 0},
+    {0, 1, 0},
+    {0, -1, 0},
+    {0, 0, 1},
+    {0, 0, -1}};
+
+  for (auto& metric : *metrics)
+  {
+    const Eigen::Vector3d normal = metric.stats.eigenvectors.col(2).normalized();
+
+    std::size_t occupied_face_count = 0;
+    double normal_variation_sum = 0.0;
+    int normal_variation_count = 0;
+    double axis_asymmetry_sum = 0.0;
+    int opposite_face_pairs = 0;
+
+    for (int axis = 0; axis < 3; ++axis)
+    {
+      const int positive_index = axis * 2;
+      const int negative_index = axis * 2 + 1;
+
+      const VoxelKey positive_key = OffsetVoxelKey(
+        metric.key,
+        kFaceOffsets[positive_index][0],
+        kFaceOffsets[positive_index][1],
+        kFaceOffsets[positive_index][2]);
+      const VoxelKey negative_key = OffsetVoxelKey(
+        metric.key,
+        kFaceOffsets[negative_index][0],
+        kFaceOffsets[negative_index][1],
+        kFaceOffsets[negative_index][2]);
+
+      const auto positive_it = lookup.find(positive_key);
+      const auto negative_it = lookup.find(negative_key);
+
+      const VoxelMetrics* positive_neighbor =
+        positive_it == lookup.end() ? nullptr : &(*metrics)[positive_it->second];
+      const VoxelMetrics* negative_neighbor =
+        negative_it == lookup.end() ? nullptr : &(*metrics)[negative_it->second];
+
+      if (positive_neighbor != nullptr)
+      {
+        ++occupied_face_count;
+        const Eigen::Vector3d neighbor_normal = positive_neighbor->stats.eigenvectors.col(2).normalized();
+        normal_variation_sum += 1.0 - std::abs(normal.dot(neighbor_normal));
+        ++normal_variation_count;
+      }
+      if (negative_neighbor != nullptr)
+      {
+        ++occupied_face_count;
+        const Eigen::Vector3d neighbor_normal = negative_neighbor->stats.eigenvectors.col(2).normalized();
+        normal_variation_sum += 1.0 - std::abs(normal.dot(neighbor_normal));
+        ++normal_variation_count;
+      }
+
+      const double positive_mass = positive_neighbor != nullptr
+        ? static_cast<double>(positive_neighbor->stats.num_points)
+        : 0.0;
+      const double negative_mass = negative_neighbor != nullptr
+        ? static_cast<double>(negative_neighbor->stats.num_points)
+        : 0.0;
+      const double total_mass = positive_mass + negative_mass;
+      axis_asymmetry_sum += total_mass > 0.0 ? std::abs(positive_mass - negative_mass) / total_mass : 0.0;
+
+      if (positive_neighbor != nullptr && negative_neighbor != nullptr)
+      {
+        ++opposite_face_pairs;
+      }
+    }
+
+    metric.context.occupied_face_count = static_cast<int>(occupied_face_count);
+    metric.context.occupied_face_ratio = static_cast<double>(occupied_face_count) / 6.0;
+    metric.context.opposite_face_pair_ratio = static_cast<double>(opposite_face_pairs) / 3.0;
+    metric.context.normal_variation =
+      normal_variation_count > 0 ? normal_variation_sum / static_cast<double>(normal_variation_count) : 0.0;
+    metric.context.occupancy_asymmetry = axis_asymmetry_sum / 3.0;
+
+    const double support_consistency =
+      0.55 * metric.context.occupied_face_ratio + 0.45 * metric.context.opposite_face_pair_ratio;
+    const double shape_planar_confidence =
+      std::clamp(0.65 * metric.stats.planarity + 0.35 * metric.stats.anisotropy, 0.0, 1.0);
+    metric.context.planar_context_penalty =
+      support_consistency * (1.0 - metric.context.normal_variation) * shape_planar_confidence;
+    metric.context.corner_context_bonus =
+      1.35 * metric.context.normal_variation +
+      1.10 * metric.context.occupancy_asymmetry +
+      0.40 * (1.0 - metric.context.opposite_face_pair_ratio);
+  }
+}
+
+double ComputeContextModeContribution(const VoxelMetrics& metric, const std::string& ranking_mode)
+{
+  if (ranking_mode == "context_face_support")
+  {
+    return
+      -3.00 * metric.context.planar_context_penalty -
+      1.00 * metric.context.occupied_face_ratio -
+      0.75 * metric.context.opposite_face_pair_ratio;
+  }
+  if (ranking_mode == "context_normal_variation")
+  {
+    return
+      3.00 * metric.context.normal_variation +
+      0.75 * metric.context.corner_context_bonus -
+      1.25 * metric.context.planar_context_penalty;
+  }
+  if (ranking_mode == "context_asymmetry")
+  {
+    return
+      2.75 * metric.context.occupancy_asymmetry +
+      0.50 * (1.0 - metric.context.opposite_face_pair_ratio) -
+      1.00 * metric.context.planar_context_penalty;
+  }
+  if (ranking_mode == "context_hybrid")
+  {
+    return
+      2.50 * metric.context.corner_context_bonus -
+      3.25 * metric.context.planar_context_penalty -
+      0.75 * metric.context.occupied_face_ratio;
+  }
+  return 0.0;
+}
+
+double ComputeInterestingScore(const VoxelMetrics& metric, const std::string& ranking_mode)
+{
+  return
+    ComputeBaseInterestingScore(metric) +
+    ComputeRankingAdjustment(metric, ranking_mode) -
+    ComputeThinPlanarFilterPenalty(metric, ranking_mode) +
+    ComputeContextModeContribution(metric, ranking_mode);
+}
+
 void EnsureDirectory(const fs::path& directory)
 {
   if (!directory.empty())
@@ -332,9 +587,9 @@ void EnsureDirectory(const fs::path& directory)
   }
 }
 
-std::string BuildInterestingVoxelScoreString(const VoxelMetrics& metric)
+std::string BuildInterestingVoxelScoreString(const VoxelMetrics& metric, const std::string& ranking_mode)
 {
-  return FormatDouble(metric.gaussian.center_advantage + metric.shell.center_penalty);
+  return FormatDouble(ComputeInterestingScore(metric, ranking_mode));
 }
 
 void ExportInterestingVoxelClouds(
@@ -417,7 +672,7 @@ void ExportInterestingVoxelClouds(
                << metric.key.z << ','
                << metric.stats.label << ','
                << metric.stats.num_points << ','
-               << BuildInterestingVoxelScoreString(metric) << '\n';
+               << BuildInterestingVoxelScoreString(metric, config.ranking_mode) << '\n';
       pcl::io::savePCDFileBinary((voxel_dir / filename).string(), per_rank_clouds[rank]);
     }
   }
@@ -450,6 +705,7 @@ AnalysisConfig LoadAnalysisConfig(const std::string& path)
   config.shape_exponent = node["shape_exponent"] ? node["shape_exponent"].as<double>() : 1.2;
   config.axis_scale_quantile = node["axis_scale_quantile"] ? node["axis_scale_quantile"].as<double>() : 0.9;
   config.axis_scale_min = node["axis_scale_min"] ? node["axis_scale_min"].as<double>() : 0.05;
+  config.ranking_mode = node["ranking_mode"] ? node["ranking_mode"].as<std::string>() : "score_only";
   config.save_top_k = node["save_top_k"] ? node["save_top_k"].as<int>() : 200;
   config.export_interesting_voxels =
     node["export_interesting_voxels"] ? node["export_interesting_voxels"].as<bool>() : true;
@@ -463,6 +719,7 @@ AnalysisConfig LoadAnalysisConfig(const std::string& path)
   {
     throw std::runtime_error("min_points_per_voxel must be >= 3");
   }
+  config.ranking_mode = NormalizeRankingMode(config.ranking_mode);
   return config;
 }
 
@@ -632,6 +889,7 @@ std::vector<VoxelMetrics> RunVoxelMorphologyAnalysis(const PointCloud& cloud, co
     }
   }
 
+  ComputeContextMetrics(&metrics);
   return metrics;
 }
 
@@ -667,7 +925,9 @@ void SaveAnalysisResults(
     csv << "vx,vy,vz,center_x,center_y,center_z,num_points,label,"
            "eig1,eig2,eig3,linearity,planarity,scattering,anisotropy,omnivariance,"
            "gaussian_avg_mahalanobis2,gaussian_center_mahalanobis2,gaussian_avg_euclidean,gaussian_center_advantage,"
-           "shell_avg_residual,shell_center_residual,shell_avg_radius,shell_center_penalty\n";
+           "shell_avg_residual,shell_center_residual,shell_avg_radius,shell_center_penalty,"
+           "occupied_face_count,occupied_face_ratio,opposite_face_pair_ratio,normal_variation,occupancy_asymmetry,"
+           "planar_context_penalty,corner_context_bonus\n";
     for (const auto& metric : metrics_by_key)
     {
       csv << metric.key.x << ','
@@ -693,7 +953,14 @@ void SaveAnalysisResults(
           << FormatDouble(metric.shell.average_surface_residual) << ','
           << FormatDouble(metric.shell.voxel_center_surface_residual) << ','
           << FormatDouble(metric.shell.average_surface_radius) << ','
-          << FormatDouble(metric.shell.center_penalty) << '\n';
+          << FormatDouble(metric.shell.center_penalty) << ','
+          << metric.context.occupied_face_count << ','
+          << FormatDouble(metric.context.occupied_face_ratio) << ','
+          << FormatDouble(metric.context.opposite_face_pair_ratio) << ','
+          << FormatDouble(metric.context.normal_variation) << ','
+          << FormatDouble(metric.context.occupancy_asymmetry) << ','
+          << FormatDouble(metric.context.planar_context_penalty) << ','
+          << FormatDouble(metric.context.corner_context_bonus) << '\n';
     }
   }
 
@@ -701,10 +968,10 @@ void SaveAnalysisResults(
   std::sort(
     ranked.begin(),
     ranked.end(),
-    [](const VoxelMetrics& lhs, const VoxelMetrics& rhs)
+    [&config](const VoxelMetrics& lhs, const VoxelMetrics& rhs)
     {
-      const double lhs_score = lhs.gaussian.center_advantage + lhs.shell.center_penalty;
-      const double rhs_score = rhs.gaussian.center_advantage + rhs.shell.center_penalty;
+      const double lhs_score = ComputeInterestingScore(lhs, config.ranking_mode);
+      const double rhs_score = ComputeInterestingScore(rhs, config.ranking_mode);
       if (lhs_score != rhs_score)
       {
         return lhs_score > rhs_score;
@@ -722,7 +989,9 @@ void SaveAnalysisResults(
 
   {
     std::ofstream csv(output_dir / "interesting_voxels.csv");
-    csv << "rank,vx,vy,vz,label,num_points,gaussian_center_advantage,shell_center_penalty,total_score\n";
+    csv << "rank,vx,vy,vz,label,num_points,gaussian_center_advantage,shell_center_penalty,"
+           "ranking_adjustment,morphology_filter_penalty,context_mode_contribution,"
+           "normal_variation,occupancy_asymmetry,planar_context_penalty,corner_context_bonus,total_score\n";
     const std::size_t limit =
       std::min<std::size_t>(ranked.size(), static_cast<std::size_t>(std::max(config.save_top_k, 0)));
     for (std::size_t rank = 0; rank < limit; ++rank)
@@ -736,24 +1005,60 @@ void SaveAnalysisResults(
           << metric.stats.num_points << ','
           << FormatDouble(metric.gaussian.center_advantage) << ','
           << FormatDouble(metric.shell.center_penalty) << ','
-          << BuildInterestingVoxelScoreString(metric) << '\n';
+          << FormatDouble(ComputeRankingAdjustment(metric, config.ranking_mode)) << ','
+          << FormatDouble(ComputeThinPlanarFilterPenalty(metric, config.ranking_mode)) << ','
+          << FormatDouble(ComputeContextModeContribution(metric, config.ranking_mode)) << ','
+          << FormatDouble(metric.context.normal_variation) << ','
+          << FormatDouble(metric.context.occupancy_asymmetry) << ','
+          << FormatDouble(metric.context.planar_context_penalty) << ','
+          << FormatDouble(metric.context.corner_context_bonus) << ','
+          << BuildInterestingVoxelScoreString(metric, config.ranking_mode) << '\n';
     }
   }
 
   {
     std::map<std::string, int> label_counts;
+    std::map<std::string, int> interesting_label_counts;
     double average_gaussian_center_advantage = 0.0;
     double average_shell_center_penalty = 0.0;
+    double average_filter_penalty = 0.0;
+    double average_face_support = 0.0;
+    double average_opposite_face_pairs = 0.0;
+    double average_normal_variation = 0.0;
+    double average_occupancy_asymmetry = 0.0;
+    double average_planar_context_penalty = 0.0;
+    double average_corner_context_bonus = 0.0;
     for (const auto& metric : metrics)
     {
       ++label_counts[metric.stats.label];
       average_gaussian_center_advantage += metric.gaussian.center_advantage;
       average_shell_center_penalty += metric.shell.center_penalty;
+      average_filter_penalty += ComputeThinPlanarFilterPenalty(metric, config.ranking_mode);
+      average_face_support += metric.context.occupied_face_ratio;
+      average_opposite_face_pairs += metric.context.opposite_face_pair_ratio;
+      average_normal_variation += metric.context.normal_variation;
+      average_occupancy_asymmetry += metric.context.occupancy_asymmetry;
+      average_planar_context_penalty += metric.context.planar_context_penalty;
+      average_corner_context_bonus += metric.context.corner_context_bonus;
     }
 
     const double denom = static_cast<double>(std::max<std::size_t>(metrics.size(), 1));
     average_gaussian_center_advantage /= denom;
     average_shell_center_penalty /= denom;
+    average_filter_penalty /= denom;
+    average_face_support /= denom;
+    average_opposite_face_pairs /= denom;
+    average_normal_variation /= denom;
+    average_occupancy_asymmetry /= denom;
+    average_planar_context_penalty /= denom;
+    average_corner_context_bonus /= denom;
+
+    const std::size_t interesting_limit =
+      std::min<std::size_t>(ranked.size(), static_cast<std::size_t>(std::max(config.save_top_k, 0)));
+    for (std::size_t rank = 0; rank < interesting_limit; ++rank)
+    {
+      ++interesting_label_counts[ranked[rank].stats.label];
+    }
 
     std::ofstream summary(output_dir / "summary.txt");
     summary << "input_points: " << input_points << '\n';
@@ -763,10 +1068,24 @@ void SaveAnalysisResults(
     summary << "min_points_per_voxel: " << config.min_points_per_voxel << '\n';
     summary << "shape_exponent: " << FormatDouble(config.shape_exponent) << '\n';
     summary << "axis_scale_quantile: " << FormatDouble(config.axis_scale_quantile) << '\n';
+    summary << "ranking_mode: " << config.ranking_mode << '\n';
+    summary << "interesting_top_k: " << interesting_limit << '\n';
     summary << "average_gaussian_center_advantage: " << FormatDouble(average_gaussian_center_advantage) << '\n';
     summary << "average_shell_center_penalty: " << FormatDouble(average_shell_center_penalty) << '\n';
+    summary << "average_morphology_filter_penalty: " << FormatDouble(average_filter_penalty) << '\n';
+    summary << "average_occupied_face_ratio: " << FormatDouble(average_face_support) << '\n';
+    summary << "average_opposite_face_pair_ratio: " << FormatDouble(average_opposite_face_pairs) << '\n';
+    summary << "average_normal_variation: " << FormatDouble(average_normal_variation) << '\n';
+    summary << "average_occupancy_asymmetry: " << FormatDouble(average_occupancy_asymmetry) << '\n';
+    summary << "average_planar_context_penalty: " << FormatDouble(average_planar_context_penalty) << '\n';
+    summary << "average_corner_context_bonus: " << FormatDouble(average_corner_context_bonus) << '\n';
     summary << "label_counts:\n";
     for (const auto& label_count : label_counts)
+    {
+      summary << "  " << label_count.first << ": " << label_count.second << '\n';
+    }
+    summary << "interesting_label_counts:\n";
+    for (const auto& label_count : interesting_label_counts)
     {
       summary << "  " << label_count.first << ": " << label_count.second << '\n';
     }

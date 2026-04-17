@@ -9,6 +9,7 @@ gaussian_regularization: 0.001
 shape_exponent: 1.2
 axis_scale_quantile: 0.9
 axis_scale_min: 0.05
+ranking_mode: score_only
 save_top_k: 200
 export_interesting_voxels: true
 export_top_k_pcd: 30

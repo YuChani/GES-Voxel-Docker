@@ -29,6 +29,7 @@ struct AnalysisConfig
   double shape_exponent = 1.2;
   double axis_scale_quantile = 0.9;
   double axis_scale_min = 0.05;
+  std::string ranking_mode = "score_only";
   int save_top_k = 200;
   bool export_interesting_voxels = true;
   int export_top_k_pcd = 30;
@@ -89,6 +90,17 @@ struct ShellMetrics
   double center_penalty = 0.0;
 };
 
+struct ContextMetrics
+{
+  int occupied_face_count = 0;
+  double occupied_face_ratio = 0.0;
+  double opposite_face_pair_ratio = 0.0;
+  double normal_variation = 0.0;
+  double occupancy_asymmetry = 0.0;
+  double planar_context_penalty = 0.0;
+  double corner_context_bonus = 0.0;
+};
+
 struct VoxelMetrics
 {
   VoxelKey key;
@@ -96,6 +108,7 @@ struct VoxelMetrics
   VoxelStats stats;
   GaussianMetrics gaussian;
   ShellMetrics shell;
+  ContextMetrics context;
 };
 
 AnalysisConfig LoadAnalysisConfig(const std::string& path);
