@@ -1530,6 +1530,10 @@ void SaveAnalysisResults(
     double average_junction_orientation_dispersion = 0.0;
     double average_junction_score = 0.0;
     double average_junction_mixed_relabel_score = 0.0;
+    double average_planar_junction_mixed_relabel_score = 0.0;
+    double average_relabeled_junction_mixed_relabel_score = 0.0;
+    int planar_relabel_score_count = 0;
+    int relabeled_relabel_score_count = 0;
     for (const auto& metric : metrics)
     {
       ++base_label_counts[metric.stats.base_label];
@@ -1549,6 +1553,16 @@ void SaveAnalysisResults(
       average_junction_orientation_dispersion += metric.context.junction_orientation_dispersion;
       average_junction_score += metric.context.junction_score;
       average_junction_mixed_relabel_score += metric.context.junction_mixed_relabel_score;
+      if (metric.stats.base_label == "planar")
+      {
+        average_planar_junction_mixed_relabel_score += metric.context.junction_mixed_relabel_score;
+        ++planar_relabel_score_count;
+      }
+      if (metric.stats.label == "junction_like_mixed")
+      {
+        average_relabeled_junction_mixed_relabel_score += metric.context.junction_mixed_relabel_score;
+        ++relabeled_relabel_score_count;
+      }
     }
 
     const double denom = static_cast<double>(std::max<std::size_t>(metrics.size(), 1));
@@ -1567,14 +1581,26 @@ void SaveAnalysisResults(
     average_junction_orientation_dispersion /= denom;
     average_junction_score /= denom;
     average_junction_mixed_relabel_score /= denom;
+    average_planar_junction_mixed_relabel_score /= static_cast<double>(std::max(planar_relabel_score_count, 1));
+    average_relabeled_junction_mixed_relabel_score /=
+      static_cast<double>(std::max(relabeled_relabel_score_count, 1));
 
     const std::size_t interesting_limit =
       std::min<std::size_t>(ranked.size(), static_cast<std::size_t>(std::max(config.save_top_k, 0)));
+    double average_topk_relabeled_junction_mixed_relabel_score = 0.0;
+    int topk_relabeled_relabel_score_count = 0;
     for (std::size_t rank = 0; rank < interesting_limit; ++rank)
     {
       ++interesting_base_label_counts[ranked[rank].stats.base_label];
       ++interesting_label_counts[ranked[rank].stats.label];
+      if (ranked[rank].stats.label == "junction_like_mixed")
+      {
+        average_topk_relabeled_junction_mixed_relabel_score += ranked[rank].context.junction_mixed_relabel_score;
+        ++topk_relabeled_relabel_score_count;
+      }
     }
+    average_topk_relabeled_junction_mixed_relabel_score /=
+      static_cast<double>(std::max(topk_relabeled_relabel_score_count, 1));
 
     const int junction_like_mixed_count = label_counts["junction_like_mixed"];
     const int combined_corner_or_junction_count =
@@ -1645,6 +1671,14 @@ void SaveAnalysisResults(
     summary << "average_junction_score: " << FormatDouble(average_junction_score) << '\n';
     summary << "average_junction_mixed_relabel_score: "
             << FormatDouble(average_junction_mixed_relabel_score) << '\n';
+    summary << "average_junction_mixed_relabel_score_all_voxels: "
+            << FormatDouble(average_junction_mixed_relabel_score) << '\n';
+    summary << "average_planar_junction_mixed_relabel_score: "
+            << FormatDouble(average_planar_junction_mixed_relabel_score) << '\n';
+    summary << "average_relabeled_junction_mixed_relabel_score: "
+            << FormatDouble(average_relabeled_junction_mixed_relabel_score) << '\n';
+    summary << "average_topk_relabeled_junction_mixed_relabel_score: "
+            << FormatDouble(average_topk_relabeled_junction_mixed_relabel_score) << '\n';
     summary << "junction_like_mixed_count: " << junction_like_mixed_count << '\n';
     summary << "combined_corner_or_junction_count: " << combined_corner_or_junction_count << '\n';
     summary << "planar_reduction_count: " << planar_reduction_count << '\n';
