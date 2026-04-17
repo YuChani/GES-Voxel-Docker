@@ -1,0 +1,4 @@
+scene_name,scene_path,point_count,selection_reason
+full0.pcd,/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/prev/BALM/datas/benchmark_realworld/full0.pcd,73452,anchor_full0
+full153.pcd,/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/prev/BALM/datas/benchmark_realworld/full153.pcd,71823,point_count_25pct
+full95.pcd,/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/prev/BALM/datas/benchmark_realworld/full95.pcd,79937,point_count_75pct

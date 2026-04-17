@@ -302,6 +302,29 @@ python3 ./scripts/run_junction_mixed_scored_multiscene_review.py \
 `results/context_refinement_scored_multiscene_review/` 아래에 scene selection, per-scene review,
 group manifest, annotation template, cross-scene summary로 저장됩니다.
 
+final manual review package with automatic PNG previews:
+
+```bash
+python3 ./scripts/build_final_manual_review_package.py \
+  --review-root ./results/context_refinement_scored_multiscene_review \
+  --output-root ./results/final_manual_review_package \
+  --panel-size 320 \
+  --thumbnail-width 360 \
+  --contact-columns 2
+```
+
+이 스크립트는 기존 multi-scene review 결과를 재사용해
+`results/final_manual_review_package/` 아래에 다음을 생성합니다.
+
+- `review_index.md`
+- `annotation_template.csv`
+- `decision_template.md`
+- scene/group/voxel별 `voxel_preview.png`, `neighborhood_preview.png`, `overlay_preview.png`
+- top-level / scene-level group contact sheet PNG
+
+기본적으로 Open3D headless offscreen 렌더를 먼저 시도하고, 현재 환경에서 불가능하면
+deterministic projection PNG로 자동 fallback 합니다.
+
 ## ranking/filter mode
 
 - `score_only`
