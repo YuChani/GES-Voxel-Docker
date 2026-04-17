@@ -29,6 +29,18 @@
   - aggregate output:
     - `results/context_refinement/comparison.csv`
     - `results/context_refinement/summary.md`
+- `scripts/run_junction_refinement.py`
+  - `context_hybrid` 대비 `junction_priority` 비교
+  - per-run output: `results/context_refinement/junction_runs/<mode>/`
+  - aggregate output:
+    - `results/context_refinement/junction_comparison.csv`
+    - `results/context_refinement/junction_summary.md`
+- `scripts/run_junction_mixed_reclassification.py`
+  - `planar -> junction_like_mixed` hard-threshold vs scored derived label 비교 실험
+  - per-run output: `results/context_refinement_scored/junction_mixed_scored_runs/<mode>/`
+  - aggregate output:
+    - `results/context_refinement_scored/junction_mixed_scored_comparison.csv`
+    - `results/context_refinement_scored/junction_mixed_scored_summary.md`
 
 ## 현재 primitive 구현 수준
 
@@ -127,6 +139,50 @@ python3 ./scripts/run_context_refinement.py \
   --top-k 200
 ```
 
+junction refinement:
+
+```bash
+./scripts/build_offline.sh
+python3 ./scripts/run_junction_refinement.py \
+  --input ./prev/BALM/datas/benchmark_realworld/full0.pcd \
+  --output-root ./results/context_refinement \
+  --voxel-size 1.0 \
+  --min-points-per-voxel 15 \
+  --shape-exponent 1.0 \
+  --axis-scale-quantile 0.95 \
+  --top-k 200
+```
+
+junction mixed reclassification:
+
+```bash
+./scripts/build_offline.sh
+python3 ./scripts/run_junction_mixed_reclassification.py \
+  --input ./prev/BALM/datas/benchmark_realworld/full0.pcd \
+  --output-root ./results/context_refinement_scored \
+  --voxel-size 1.0 \
+  --min-points-per-voxel 15 \
+  --shape-exponent 1.0 \
+  --axis-scale-quantile 0.95 \
+  --junction-mixed-min-neighbor-count 10 \
+  --junction-mixed-min-cluster-count 3 \
+  --junction-mixed-min-score 0.72 \
+  --junction-mixed-min-orientation-dispersion 0.48 \
+  --junction-mixed-max-dominant-fraction 0.38 \
+  --junction-mixed-min-occupancy-asymmetry 0.30 \
+  --junction-mixed-min-normal-variation 0.20 \
+  --junction-mixed-max-opposite-face-pair-ratio 0.67 \
+  --junction-mixed-scored-min-neighbor-count 8 \
+  --junction-mixed-scored-min-cluster-count 2 \
+  --junction-mixed-scored-min-junction-score 0.30 \
+  --junction-mixed-scored-min-orientation-dispersion 0.35 \
+  --junction-mixed-scored-max-dominant-fraction 0.62 \
+  --junction-mixed-scored-min-occupancy-asymmetry 0.18 \
+  --junction-mixed-scored-min-normal-variation 0.10 \
+  --junction-mixed-scored-threshold 0.66 \
+  --top-k 200
+```
+
 ## ranking/filter mode
 
 - `score_only`
@@ -145,3 +201,9 @@ python3 ./scripts/run_context_refinement.py \
   - opposite-face occupancy asymmetry가 큰 voxel에 가산점
 - `context_hybrid`
   - `nonplanar_priority` 위에 face-support penalty와 corner-context bonus를 함께 적용
+- `junction_priority`
+  - 2-ring neighborhood normal cluster / orientation dispersion 기반 junction score를 추가 적용
+- `junction_mixed_priority`
+  - `junction_like_mixed` derived label과 junction score를 함께 사용하는 보수적 재분류 실험용 mode
+- `junction_mixed_scored`
+  - 기존 hard-threshold 대신 lightweight weighted score로 `planar -> junction_like_mixed`를 재분류하는 mode

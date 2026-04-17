@@ -52,12 +52,35 @@ std::string NormalizeRankingMode(std::string mode)
     mode != "context_face_support" &&
     mode != "context_normal_variation" &&
     mode != "context_asymmetry" &&
-    mode != "context_hybrid")
+    mode != "context_hybrid" &&
+    mode != "junction_priority" &&
+    mode != "junction_mixed_priority" &&
+    mode != "junction_mixed_scored")
   {
     throw std::runtime_error(
       "Unsupported ranking mode: " + mode +
       ". Use score_only|corner_priority|nonplanar_priority|context_face_support|"
-      "context_normal_variation|context_asymmetry|context_hybrid.");
+      "context_normal_variation|context_asymmetry|context_hybrid|junction_priority|"
+      "junction_mixed_priority|junction_mixed_scored.");
+  }
+  return mode;
+}
+
+std::string NormalizeJunctionMixedRelabelMode(std::string mode)
+{
+  for (char& ch : mode)
+  {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  if (mode.empty())
+  {
+    return "hard_threshold";
+  }
+  if (mode != "hard_threshold" && mode != "scored")
+  {
+    throw std::runtime_error(
+      "Unsupported junction mixed relabel mode: " + mode +
+      ". Use hard_threshold|scored.");
   }
   return mode;
 }
@@ -108,13 +131,16 @@ void PrintUsage()
     << "Usage: voxel_morphology_analyzer [--config <yaml>] --input <pcd|dir> [--output <dir>] [--mode auto|single|aggregate|batch]\n"
     << "       [--voxel-size <float>] [--min-points-per-voxel <int>] [--shape-exponent <float>]\n"
     << "       [--axis-scale-quantile <float>] [--ranking-mode <mode>] [--save-top-k <int>]\n"
+    << "       [--enable-junction-mixed-relabel <bool>] [--junction-mixed-relabel-mode <mode>]\n"
+    << "       [--junction-mixed-min-score <float>] [--junction-mixed-scored-threshold <float>]\n"
     << "       [--export-interesting-voxels <bool>] [--export-top-k-pcd <int>]\n"
     << "  auto      : file면 single, dir면 aggregate\n"
     << "  single    : 단일 PCD 하나 분석\n"
     << "  aggregate : 디렉토리의 PCD를 모두 누적해서 하나의 map처럼 분석\n"
     << "  batch     : 디렉토리의 각 PCD를 개별 분석\n"
     << "  ranking   : score_only|corner_priority|nonplanar_priority|context_face_support|"
-       "context_normal_variation|context_asymmetry|context_hybrid\n";
+       "context_normal_variation|context_asymmetry|context_hybrid|junction_priority|"
+       "junction_mixed_priority|junction_mixed_scored\n";
 }
 
 void AnalyzeAndSave(
@@ -151,6 +177,7 @@ int main(int argc, char** argv)
     std::string output_override;
     std::string mode_override;
     std::string ranking_mode_override;
+    std::string junction_mixed_relabel_mode_override;
     bool output_overridden = false;
     bool voxel_size_overridden = false;
     bool min_points_overridden = false;
@@ -159,6 +186,24 @@ int main(int argc, char** argv)
     bool save_top_k_overridden = false;
     bool export_interesting_voxels_overridden = false;
     bool export_top_k_pcd_overridden = false;
+    bool junction_mixed_relabel_overridden = false;
+    bool junction_mixed_relabel_mode_overridden = false;
+    bool junction_mixed_min_neighbor_count_overridden = false;
+    bool junction_mixed_min_cluster_count_overridden = false;
+    bool junction_mixed_min_score_overridden = false;
+    bool junction_mixed_min_orientation_dispersion_overridden = false;
+    bool junction_mixed_max_dominant_fraction_overridden = false;
+    bool junction_mixed_min_occupancy_asymmetry_overridden = false;
+    bool junction_mixed_min_normal_variation_overridden = false;
+    bool junction_mixed_max_opposite_face_pair_ratio_overridden = false;
+    bool junction_mixed_scored_min_neighbor_count_overridden = false;
+    bool junction_mixed_scored_min_cluster_count_overridden = false;
+    bool junction_mixed_scored_min_junction_score_overridden = false;
+    bool junction_mixed_scored_min_orientation_dispersion_overridden = false;
+    bool junction_mixed_scored_max_dominant_fraction_overridden = false;
+    bool junction_mixed_scored_min_occupancy_asymmetry_overridden = false;
+    bool junction_mixed_scored_min_normal_variation_overridden = false;
+    bool junction_mixed_scored_threshold_overridden = false;
     double voxel_size_override = 0.0;
     int min_points_override = 0;
     double shape_exponent_override = 0.0;
@@ -166,6 +211,23 @@ int main(int argc, char** argv)
     int save_top_k_override = 0;
     bool export_interesting_voxels_override = true;
     int export_top_k_pcd_override = 0;
+    bool junction_mixed_relabel_override = false;
+    int junction_mixed_min_neighbor_count_override = 0;
+    int junction_mixed_min_cluster_count_override = 0;
+    double junction_mixed_min_score_override = 0.0;
+    double junction_mixed_min_orientation_dispersion_override = 0.0;
+    double junction_mixed_max_dominant_fraction_override = 0.0;
+    double junction_mixed_min_occupancy_asymmetry_override = 0.0;
+    double junction_mixed_min_normal_variation_override = 0.0;
+    double junction_mixed_max_opposite_face_pair_ratio_override = 0.0;
+    int junction_mixed_scored_min_neighbor_count_override = 0;
+    int junction_mixed_scored_min_cluster_count_override = 0;
+    double junction_mixed_scored_min_junction_score_override = 0.0;
+    double junction_mixed_scored_min_orientation_dispersion_override = 0.0;
+    double junction_mixed_scored_max_dominant_fraction_override = 0.0;
+    double junction_mixed_scored_min_occupancy_asymmetry_override = 0.0;
+    double junction_mixed_scored_min_normal_variation_override = 0.0;
+    double junction_mixed_scored_threshold_override = 0.0;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -231,6 +293,114 @@ int main(int argc, char** argv)
         save_top_k_overridden = true;
         continue;
       }
+      if (arg == "--enable-junction-mixed-relabel" && index + 1 < argc)
+      {
+        junction_mixed_relabel_override = ParseBool(argv[++index]);
+        junction_mixed_relabel_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-relabel-mode" && index + 1 < argc)
+      {
+        junction_mixed_relabel_mode_override = NormalizeJunctionMixedRelabelMode(argv[++index]);
+        junction_mixed_relabel_mode_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-min-neighbor-count" && index + 1 < argc)
+      {
+        junction_mixed_min_neighbor_count_override = std::stoi(argv[++index]);
+        junction_mixed_min_neighbor_count_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-min-cluster-count" && index + 1 < argc)
+      {
+        junction_mixed_min_cluster_count_override = std::stoi(argv[++index]);
+        junction_mixed_min_cluster_count_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-min-score" && index + 1 < argc)
+      {
+        junction_mixed_min_score_override = std::stod(argv[++index]);
+        junction_mixed_min_score_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-min-orientation-dispersion" && index + 1 < argc)
+      {
+        junction_mixed_min_orientation_dispersion_override = std::stod(argv[++index]);
+        junction_mixed_min_orientation_dispersion_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-max-dominant-fraction" && index + 1 < argc)
+      {
+        junction_mixed_max_dominant_fraction_override = std::stod(argv[++index]);
+        junction_mixed_max_dominant_fraction_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-min-occupancy-asymmetry" && index + 1 < argc)
+      {
+        junction_mixed_min_occupancy_asymmetry_override = std::stod(argv[++index]);
+        junction_mixed_min_occupancy_asymmetry_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-min-normal-variation" && index + 1 < argc)
+      {
+        junction_mixed_min_normal_variation_override = std::stod(argv[++index]);
+        junction_mixed_min_normal_variation_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-max-opposite-face-pair-ratio" && index + 1 < argc)
+      {
+        junction_mixed_max_opposite_face_pair_ratio_override = std::stod(argv[++index]);
+        junction_mixed_max_opposite_face_pair_ratio_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-min-neighbor-count" && index + 1 < argc)
+      {
+        junction_mixed_scored_min_neighbor_count_override = std::stoi(argv[++index]);
+        junction_mixed_scored_min_neighbor_count_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-min-cluster-count" && index + 1 < argc)
+      {
+        junction_mixed_scored_min_cluster_count_override = std::stoi(argv[++index]);
+        junction_mixed_scored_min_cluster_count_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-min-junction-score" && index + 1 < argc)
+      {
+        junction_mixed_scored_min_junction_score_override = std::stod(argv[++index]);
+        junction_mixed_scored_min_junction_score_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-min-orientation-dispersion" && index + 1 < argc)
+      {
+        junction_mixed_scored_min_orientation_dispersion_override = std::stod(argv[++index]);
+        junction_mixed_scored_min_orientation_dispersion_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-max-dominant-fraction" && index + 1 < argc)
+      {
+        junction_mixed_scored_max_dominant_fraction_override = std::stod(argv[++index]);
+        junction_mixed_scored_max_dominant_fraction_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-min-occupancy-asymmetry" && index + 1 < argc)
+      {
+        junction_mixed_scored_min_occupancy_asymmetry_override = std::stod(argv[++index]);
+        junction_mixed_scored_min_occupancy_asymmetry_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-min-normal-variation" && index + 1 < argc)
+      {
+        junction_mixed_scored_min_normal_variation_override = std::stod(argv[++index]);
+        junction_mixed_scored_min_normal_variation_overridden = true;
+        continue;
+      }
+      if (arg == "--junction-mixed-scored-threshold" && index + 1 < argc)
+      {
+        junction_mixed_scored_threshold_override = std::stod(argv[++index]);
+        junction_mixed_scored_threshold_overridden = true;
+        continue;
+      }
       if (arg == "--export-interesting-voxels" && index + 1 < argc)
       {
         export_interesting_voxels_override = ParseBool(argv[++index]);
@@ -284,6 +454,81 @@ int main(int argc, char** argv)
     {
       config.save_top_k = save_top_k_override;
     }
+    if (junction_mixed_relabel_overridden)
+    {
+      config.enable_junction_mixed_relabel = junction_mixed_relabel_override;
+    }
+    if (junction_mixed_relabel_mode_overridden)
+    {
+      config.junction_mixed_relabel_mode = junction_mixed_relabel_mode_override;
+    }
+    if (junction_mixed_min_neighbor_count_overridden)
+    {
+      config.junction_mixed_min_neighbor_count = junction_mixed_min_neighbor_count_override;
+    }
+    if (junction_mixed_min_cluster_count_overridden)
+    {
+      config.junction_mixed_min_cluster_count = junction_mixed_min_cluster_count_override;
+    }
+    if (junction_mixed_min_score_overridden)
+    {
+      config.junction_mixed_min_score = junction_mixed_min_score_override;
+    }
+    if (junction_mixed_min_orientation_dispersion_overridden)
+    {
+      config.junction_mixed_min_orientation_dispersion = junction_mixed_min_orientation_dispersion_override;
+    }
+    if (junction_mixed_max_dominant_fraction_overridden)
+    {
+      config.junction_mixed_max_dominant_fraction = junction_mixed_max_dominant_fraction_override;
+    }
+    if (junction_mixed_min_occupancy_asymmetry_overridden)
+    {
+      config.junction_mixed_min_occupancy_asymmetry = junction_mixed_min_occupancy_asymmetry_override;
+    }
+    if (junction_mixed_min_normal_variation_overridden)
+    {
+      config.junction_mixed_min_normal_variation = junction_mixed_min_normal_variation_override;
+    }
+    if (junction_mixed_max_opposite_face_pair_ratio_overridden)
+    {
+      config.junction_mixed_max_opposite_face_pair_ratio = junction_mixed_max_opposite_face_pair_ratio_override;
+    }
+    if (junction_mixed_scored_min_neighbor_count_overridden)
+    {
+      config.junction_mixed_scored_min_neighbor_count = junction_mixed_scored_min_neighbor_count_override;
+    }
+    if (junction_mixed_scored_min_cluster_count_overridden)
+    {
+      config.junction_mixed_scored_min_cluster_count = junction_mixed_scored_min_cluster_count_override;
+    }
+    if (junction_mixed_scored_min_junction_score_overridden)
+    {
+      config.junction_mixed_scored_min_junction_score = junction_mixed_scored_min_junction_score_override;
+    }
+    if (junction_mixed_scored_min_orientation_dispersion_overridden)
+    {
+      config.junction_mixed_scored_min_orientation_dispersion =
+        junction_mixed_scored_min_orientation_dispersion_override;
+    }
+    if (junction_mixed_scored_max_dominant_fraction_overridden)
+    {
+      config.junction_mixed_scored_max_dominant_fraction =
+        junction_mixed_scored_max_dominant_fraction_override;
+    }
+    if (junction_mixed_scored_min_occupancy_asymmetry_overridden)
+    {
+      config.junction_mixed_scored_min_occupancy_asymmetry =
+        junction_mixed_scored_min_occupancy_asymmetry_override;
+    }
+    if (junction_mixed_scored_min_normal_variation_overridden)
+    {
+      config.junction_mixed_scored_min_normal_variation = junction_mixed_scored_min_normal_variation_override;
+    }
+    if (junction_mixed_scored_threshold_overridden)
+    {
+      config.junction_mixed_scored_threshold = junction_mixed_scored_threshold_override;
+    }
     if (export_interesting_voxels_overridden)
     {
       config.export_interesting_voxels = export_interesting_voxels_override;
@@ -295,6 +540,7 @@ int main(int argc, char** argv)
 
     config.input_mode = NormalizeMode(config.input_mode);
     config.ranking_mode = NormalizeRankingMode(config.ranking_mode);
+    config.junction_mixed_relabel_mode = NormalizeJunctionMixedRelabelMode(config.junction_mixed_relabel_mode);
     if (config.voxel_size <= 0.0)
     {
       throw std::runtime_error("voxel_size must be positive");

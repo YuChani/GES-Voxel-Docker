@@ -16,7 +16,6 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
-#include <numeric>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -153,6 +152,7 @@ VoxelStats ComputeVoxelStats(const VoxelBucket& voxel)
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(stats.covariance);
   if (solver.info() != Eigen::Success)
   {
+    stats.base_label = "eigensolver_failed";
     stats.label = "eigensolver_failed";
     return stats;
   }
@@ -198,6 +198,7 @@ VoxelStats ComputeVoxelStats(const VoxelBucket& voxel)
   {
     stats.label = "corner_like";
   }
+  stats.base_label = stats.label;
 
   return stats;
 }
@@ -325,6 +326,15 @@ std::string FormatDouble(double value)
   return stream.str();
 }
 
+double NormalizeRange(double value, double lower, double upper)
+{
+  if (upper <= lower)
+  {
+    return 0.0;
+  }
+  return std::clamp((value - lower) / (upper - lower), 0.0, 1.0);
+}
+
 std::string NormalizeRankingMode(std::string mode)
 {
   mode = ToLower(std::move(mode));
@@ -339,12 +349,32 @@ std::string NormalizeRankingMode(std::string mode)
     mode != "context_face_support" &&
     mode != "context_normal_variation" &&
     mode != "context_asymmetry" &&
-    mode != "context_hybrid")
+    mode != "context_hybrid" &&
+    mode != "junction_priority" &&
+    mode != "junction_mixed_priority" &&
+    mode != "junction_mixed_scored")
   {
     throw std::runtime_error(
       "Unsupported ranking_mode: " + mode +
       ". Use score_only|corner_priority|nonplanar_priority|context_face_support|"
-      "context_normal_variation|context_asymmetry|context_hybrid.");
+      "context_normal_variation|context_asymmetry|context_hybrid|junction_priority|"
+      "junction_mixed_priority|junction_mixed_scored.");
+  }
+  return mode;
+}
+
+std::string NormalizeJunctionMixedRelabelMode(std::string mode)
+{
+  mode = ToLower(std::move(mode));
+  if (mode.empty())
+  {
+    return "hard_threshold";
+  }
+  if (mode != "hard_threshold" && mode != "scored")
+  {
+    throw std::runtime_error(
+      "Unsupported junction_mixed_relabel_mode: " + mode +
+      ". Use hard_threshold|scored.");
   }
   return mode;
 }
@@ -352,6 +382,16 @@ std::string NormalizeRankingMode(std::string mode)
 bool UsesCornerPriorityBase(const std::string& ranking_mode)
 {
   return ranking_mode == "corner_priority";
+}
+
+bool UsesJunctionMixedRanking(const std::string& ranking_mode)
+{
+  return ranking_mode == "junction_mixed_priority" || ranking_mode == "junction_mixed_scored";
+}
+
+bool UsesScoredJunctionMixedRanking(const std::string& ranking_mode)
+{
+  return ranking_mode == "junction_mixed_scored";
 }
 
 double ComputeBaseInterestingScore(const VoxelMetrics& metric)
@@ -388,10 +428,35 @@ double ComputeRankingAdjustment(const VoxelMetrics& metric, const std::string& r
   {
     label_bias = -2.00;
   }
+  else if (metric.stats.label == "junction_like_mixed")
+  {
+    if (UsesScoredJunctionMixedRanking(ranking_mode))
+    {
+      label_bias = 1.55;
+    }
+    else if (UsesJunctionMixedRanking(ranking_mode))
+    {
+      label_bias = 1.35;
+    }
+    else
+    {
+      label_bias = 0.45;
+    }
+  }
 
   if (use_corner_priority)
   {
     return label_bias + 1.50 * metric.stats.scattering - 1.25 * metric.stats.planarity;
+  }
+
+  if (UsesScoredJunctionMixedRanking(ranking_mode))
+  {
+    return label_bias + 2.25 * metric.stats.scattering - 0.95 * metric.stats.planarity;
+  }
+
+  if (UsesJunctionMixedRanking(ranking_mode))
+  {
+    return label_bias + 2.10 * metric.stats.scattering - 1.10 * metric.stats.planarity;
   }
 
   return label_bias + 2.25 * metric.stats.scattering - 1.75 * metric.stats.planarity;
@@ -437,6 +502,12 @@ void ComputeContextMetrics(std::vector<VoxelMetrics>* metrics)
   {
     return;
   }
+
+  struct NormalCluster
+  {
+    Eigen::Vector3d representative = Eigen::Vector3d::UnitZ();
+    double weight = 0.0;
+  };
 
   std::unordered_map<VoxelKey, std::size_t, VoxelKeyHash> lookup;
   lookup.reserve(metrics->size());
@@ -534,6 +605,304 @@ void ComputeContextMetrics(std::vector<VoxelMetrics>* metrics)
       1.35 * metric.context.normal_variation +
       1.10 * metric.context.occupancy_asymmetry +
       0.40 * (1.0 - metric.context.opposite_face_pair_ratio);
+
+    std::vector<NormalCluster> clusters;
+    double total_neighbor_weight = 0.0;
+    int junction_neighbor_count = 0;
+    for (int dx = -2; dx <= 2; ++dx)
+    {
+      for (int dy = -2; dy <= 2; ++dy)
+      {
+        for (int dz = -2; dz <= 2; ++dz)
+        {
+          if (dx == 0 && dy == 0 && dz == 0)
+          {
+            continue;
+          }
+
+          const VoxelKey neighbor_key = OffsetVoxelKey(metric.key, dx, dy, dz);
+          const auto neighbor_it = lookup.find(neighbor_key);
+          if (neighbor_it == lookup.end())
+          {
+            continue;
+          }
+
+          const VoxelMetrics& neighbor = (*metrics)[neighbor_it->second];
+          if (neighbor.stats.label == "degenerate" || neighbor.stats.label == "eigensolver_failed")
+          {
+            continue;
+          }
+
+          const int chebyshev_distance = std::max({std::abs(dx), std::abs(dy), std::abs(dz)});
+          const int manhattan_distance = std::abs(dx) + std::abs(dy) + std::abs(dz);
+          const double distance_penalty =
+            1.0 + 0.40 * static_cast<double>(std::max(chebyshev_distance - 1, 0)) +
+            0.10 * static_cast<double>(std::max(manhattan_distance - 1, 0));
+          const double weight =
+            std::sqrt(static_cast<double>(neighbor.stats.num_points)) *
+            (0.55 + 0.45 * neighbor.stats.anisotropy) /
+            distance_penalty;
+          if (weight <= 0.0)
+          {
+            continue;
+          }
+
+          ++junction_neighbor_count;
+          total_neighbor_weight += weight;
+          Eigen::Vector3d neighbor_normal = neighbor.stats.eigenvectors.col(2).normalized();
+
+          double best_alignment = 0.0;
+          std::size_t best_cluster = clusters.size();
+          for (std::size_t cluster_index = 0; cluster_index < clusters.size(); ++cluster_index)
+          {
+            const double alignment = std::abs(clusters[cluster_index].representative.dot(neighbor_normal));
+            if (alignment > best_alignment)
+            {
+              best_alignment = alignment;
+              best_cluster = cluster_index;
+            }
+          }
+
+          if (best_cluster < clusters.size() && best_alignment >= 0.92)
+          {
+            if (clusters[best_cluster].representative.dot(neighbor_normal) < 0.0)
+            {
+              neighbor_normal = -neighbor_normal;
+            }
+            const Eigen::Vector3d accumulated =
+              clusters[best_cluster].representative * clusters[best_cluster].weight +
+              neighbor_normal * weight;
+            clusters[best_cluster].representative = accumulated.normalized();
+            clusters[best_cluster].weight += weight;
+          }
+          else
+          {
+            clusters.push_back(NormalCluster{neighbor_normal, weight});
+          }
+        }
+      }
+    }
+
+    metric.context.junction_neighbor_count = junction_neighbor_count;
+    if (total_neighbor_weight <= 0.0 || clusters.empty())
+    {
+      continue;
+    }
+
+    std::sort(
+      clusters.begin(),
+      clusters.end(),
+      [](const NormalCluster& lhs, const NormalCluster& rhs)
+      {
+        return lhs.weight > rhs.weight;
+      });
+
+    std::vector<double> cluster_fractions;
+    cluster_fractions.reserve(clusters.size());
+    for (const auto& cluster : clusters)
+    {
+      cluster_fractions.push_back(cluster.weight / total_neighbor_weight);
+    }
+
+    int significant_clusters = 0;
+    for (const double fraction : cluster_fractions)
+    {
+      if (fraction >= 0.15)
+      {
+        ++significant_clusters;
+      }
+    }
+    metric.context.junction_cluster_count = significant_clusters;
+    metric.context.junction_dominant_fraction = cluster_fractions.front();
+
+    if (clusters.size() >= 2)
+    {
+      double entropy = 0.0;
+      for (const double fraction : cluster_fractions)
+      {
+        if (fraction > kEpsilon)
+        {
+          entropy -= fraction * std::log(fraction);
+        }
+      }
+      metric.context.junction_entropy = entropy / std::log(static_cast<double>(clusters.size()));
+
+      double pairwise_dispersion_sum = 0.0;
+      double pairwise_weight_sum = 0.0;
+      for (std::size_t lhs_index = 0; lhs_index < clusters.size(); ++lhs_index)
+      {
+        const double lhs_fraction = cluster_fractions[lhs_index];
+        for (std::size_t rhs_index = lhs_index + 1; rhs_index < clusters.size(); ++rhs_index)
+        {
+          const double rhs_fraction = cluster_fractions[rhs_index];
+          const double pair_weight = lhs_fraction * rhs_fraction;
+          const double orientation_gap =
+            1.0 - std::abs(clusters[lhs_index].representative.dot(clusters[rhs_index].representative));
+          pairwise_dispersion_sum += pair_weight * orientation_gap;
+          pairwise_weight_sum += pair_weight;
+        }
+      }
+      metric.context.junction_orientation_dispersion =
+        pairwise_weight_sum > 0.0 ? pairwise_dispersion_sum / pairwise_weight_sum : 0.0;
+    }
+
+    const double cluster_count_term =
+      std::clamp(static_cast<double>(std::max(significant_clusters - 1, 0)) / 2.0, 0.0, 1.0);
+    const double entropy_term = std::clamp(metric.context.junction_entropy, 0.0, 1.0);
+    const double dispersion_term =
+      std::clamp(metric.context.junction_orientation_dispersion / 0.45, 0.0, 1.0);
+    const double dominance_relief =
+      std::clamp(1.0 - metric.context.junction_dominant_fraction, 0.0, 1.0);
+    metric.context.junction_score =
+      cluster_count_term *
+      (0.45 + 0.55 * entropy_term) *
+      (0.35 + 0.65 * dispersion_term) *
+      (0.35 + 0.65 * dominance_relief);
+  }
+}
+
+double ComputeJunctionMixedRelabelScore(const VoxelMetrics& metric)
+{
+  const double junction_score_term = NormalizeRange(metric.context.junction_score, 0.45, 0.82);
+  const double neighbor_term =
+    NormalizeRange(static_cast<double>(metric.context.junction_neighbor_count), 8.0, 24.0);
+  const double cluster_term =
+    NormalizeRange(static_cast<double>(metric.context.junction_cluster_count), 2.0, 4.0);
+  const double dispersion_term = NormalizeRange(metric.context.junction_orientation_dispersion, 0.35, 0.68);
+  const double dominance_relief_term =
+    NormalizeRange(1.0 - metric.context.junction_dominant_fraction, 0.35, 0.75);
+  const double asymmetry_term = NormalizeRange(metric.context.occupancy_asymmetry, 0.15, 0.70);
+  const double normal_variation_term = NormalizeRange(metric.context.normal_variation, 0.06, 0.32);
+  const double scattering_term = NormalizeRange(metric.stats.scattering, 0.005, 0.08);
+  const double corner_bonus_term = NormalizeRange(metric.context.corner_context_bonus, 0.25, 1.60);
+  const double opposite_face_penalty = NormalizeRange(metric.context.opposite_face_pair_ratio, 0.33, 0.90);
+  const double planar_penalty = NormalizeRange(metric.context.planar_context_penalty, 0.20, 0.65);
+
+  return
+    0.30 * junction_score_term +
+    0.10 * neighbor_term +
+    0.08 * cluster_term +
+    0.16 * dispersion_term +
+    0.12 * dominance_relief_term +
+    0.10 * asymmetry_term +
+    0.10 * normal_variation_term +
+    0.05 * scattering_term +
+    0.08 * corner_bonus_term -
+    0.06 * opposite_face_penalty -
+    0.07 * planar_penalty;
+}
+
+bool ShouldRelabelPlanarAsJunctionMixedHardThreshold(const VoxelMetrics& metric, const AnalysisConfig& config)
+{
+  if (metric.stats.base_label != "planar")
+  {
+    return false;
+  }
+
+  if (metric.context.junction_neighbor_count < config.junction_mixed_min_neighbor_count)
+  {
+    return false;
+  }
+  if (metric.context.junction_cluster_count < config.junction_mixed_min_cluster_count)
+  {
+    return false;
+  }
+  if (metric.context.junction_score < config.junction_mixed_min_score)
+  {
+    return false;
+  }
+  if (metric.context.junction_orientation_dispersion < config.junction_mixed_min_orientation_dispersion)
+  {
+    return false;
+  }
+  if (metric.context.junction_dominant_fraction > config.junction_mixed_max_dominant_fraction)
+  {
+    return false;
+  }
+  if (metric.context.opposite_face_pair_ratio > config.junction_mixed_max_opposite_face_pair_ratio)
+  {
+    return false;
+  }
+
+  const bool has_auxiliary_support =
+    metric.context.occupancy_asymmetry >= config.junction_mixed_min_occupancy_asymmetry ||
+    metric.context.normal_variation >= config.junction_mixed_min_normal_variation;
+  if (!has_auxiliary_support)
+  {
+    return false;
+  }
+
+  return true;
+}
+
+bool ShouldRelabelPlanarAsJunctionMixedScored(const VoxelMetrics& metric, const AnalysisConfig& config)
+{
+  if (metric.stats.base_label != "planar")
+  {
+    return false;
+  }
+
+  if (metric.context.junction_neighbor_count < config.junction_mixed_scored_min_neighbor_count)
+  {
+    return false;
+  }
+  if (metric.context.junction_cluster_count < config.junction_mixed_scored_min_cluster_count)
+  {
+    return false;
+  }
+  if (metric.context.junction_score < config.junction_mixed_scored_min_junction_score)
+  {
+    return false;
+  }
+  if (metric.context.junction_orientation_dispersion < config.junction_mixed_scored_min_orientation_dispersion)
+  {
+    return false;
+  }
+  if (metric.context.junction_dominant_fraction > config.junction_mixed_scored_max_dominant_fraction)
+  {
+    return false;
+  }
+
+  const bool has_auxiliary_support =
+    metric.context.occupancy_asymmetry >= config.junction_mixed_scored_min_occupancy_asymmetry ||
+    metric.context.normal_variation >= config.junction_mixed_scored_min_normal_variation;
+  if (!has_auxiliary_support)
+  {
+    return false;
+  }
+
+  return metric.context.junction_mixed_relabel_score >= config.junction_mixed_scored_threshold;
+}
+
+bool ShouldRelabelPlanarAsJunctionMixed(const VoxelMetrics& metric, const AnalysisConfig& config)
+{
+  if (!config.enable_junction_mixed_relabel)
+  {
+    return false;
+  }
+
+  if (config.junction_mixed_relabel_mode == "scored")
+  {
+    return ShouldRelabelPlanarAsJunctionMixedScored(metric, config);
+  }
+  return ShouldRelabelPlanarAsJunctionMixedHardThreshold(metric, config);
+}
+
+void ApplyDerivedLabelRefinement(std::vector<VoxelMetrics>* metrics, const AnalysisConfig& config)
+{
+  if (metrics == nullptr)
+  {
+    return;
+  }
+
+  for (auto& metric : *metrics)
+  {
+    metric.stats.label = metric.stats.base_label;
+    metric.context.junction_mixed_relabel_score = ComputeJunctionMixedRelabelScore(metric);
+    if (ShouldRelabelPlanarAsJunctionMixed(metric, config))
+    {
+      metric.stats.label = "junction_like_mixed";
+    }
   }
 }
 
@@ -567,7 +936,55 @@ double ComputeContextModeContribution(const VoxelMetrics& metric, const std::str
       3.25 * metric.context.planar_context_penalty -
       0.75 * metric.context.occupied_face_ratio;
   }
+  if (ranking_mode == "junction_priority")
+  {
+    return
+      2.50 * metric.context.corner_context_bonus -
+      3.00 * metric.context.planar_context_penalty -
+      0.50 * metric.context.occupied_face_ratio;
+  }
+  if (ranking_mode == "junction_mixed_priority")
+  {
+    return
+      2.50 * metric.context.corner_context_bonus -
+      2.75 * metric.context.planar_context_penalty -
+      0.35 * metric.context.occupied_face_ratio;
+  }
+  if (ranking_mode == "junction_mixed_scored")
+  {
+    return
+      2.65 * metric.context.corner_context_bonus -
+      2.55 * metric.context.planar_context_penalty -
+      0.25 * metric.context.occupied_face_ratio;
+  }
   return 0.0;
+}
+
+double ComputeJunctionModeContribution(const VoxelMetrics& metric, const std::string& ranking_mode)
+{
+  if (
+    ranking_mode != "junction_priority" &&
+    ranking_mode != "junction_mixed_priority" &&
+    ranking_mode != "junction_mixed_scored")
+  {
+    return 0.0;
+  }
+
+  const double score_weight =
+    ranking_mode == "junction_mixed_scored" ? 4.20 :
+    (ranking_mode == "junction_mixed_priority" ? 4.10 : 3.75);
+  const double dispersion_weight =
+    ranking_mode == "junction_mixed_scored" ? 1.55 :
+    (ranking_mode == "junction_mixed_priority" ? 1.40 : 1.25);
+  const double dominant_penalty =
+    ranking_mode == "junction_mixed_scored" ? 1.20 :
+    (ranking_mode == "junction_mixed_priority" ? 1.35 : 1.50);
+  const double relabel_score_weight = ranking_mode == "junction_mixed_scored" ? 1.40 : 0.0;
+  return
+    score_weight * metric.context.junction_score +
+    dispersion_weight * metric.context.junction_orientation_dispersion -
+    dominant_penalty * metric.context.junction_dominant_fraction +
+    relabel_score_weight * metric.context.junction_mixed_relabel_score;
 }
 
 double ComputeInterestingScore(const VoxelMetrics& metric, const std::string& ranking_mode)
@@ -576,7 +993,8 @@ double ComputeInterestingScore(const VoxelMetrics& metric, const std::string& ra
     ComputeBaseInterestingScore(metric) +
     ComputeRankingAdjustment(metric, ranking_mode) -
     ComputeThinPlanarFilterPenalty(metric, ranking_mode) +
-    ComputeContextModeContribution(metric, ranking_mode);
+    ComputeContextModeContribution(metric, ranking_mode) +
+    ComputeJunctionModeContribution(metric, ranking_mode);
 }
 
 void EnsureDirectory(const fs::path& directory)
@@ -706,6 +1124,62 @@ AnalysisConfig LoadAnalysisConfig(const std::string& path)
   config.axis_scale_quantile = node["axis_scale_quantile"] ? node["axis_scale_quantile"].as<double>() : 0.9;
   config.axis_scale_min = node["axis_scale_min"] ? node["axis_scale_min"].as<double>() : 0.05;
   config.ranking_mode = node["ranking_mode"] ? node["ranking_mode"].as<std::string>() : "score_only";
+  config.enable_junction_mixed_relabel =
+    node["enable_junction_mixed_relabel"] ? node["enable_junction_mixed_relabel"].as<bool>() : false;
+  config.junction_mixed_relabel_mode =
+    node["junction_mixed_relabel_mode"] ? node["junction_mixed_relabel_mode"].as<std::string>() : "hard_threshold";
+  config.junction_mixed_min_neighbor_count =
+    node["junction_mixed_min_neighbor_count"] ? node["junction_mixed_min_neighbor_count"].as<int>() : 10;
+  config.junction_mixed_min_cluster_count =
+    node["junction_mixed_min_cluster_count"] ? node["junction_mixed_min_cluster_count"].as<int>() : 3;
+  config.junction_mixed_min_score =
+    node["junction_mixed_min_score"] ? node["junction_mixed_min_score"].as<double>() : 0.72;
+  config.junction_mixed_min_orientation_dispersion =
+    node["junction_mixed_min_orientation_dispersion"]
+      ? node["junction_mixed_min_orientation_dispersion"].as<double>()
+      : 0.48;
+  config.junction_mixed_max_dominant_fraction =
+    node["junction_mixed_max_dominant_fraction"]
+      ? node["junction_mixed_max_dominant_fraction"].as<double>()
+      : 0.38;
+  config.junction_mixed_min_occupancy_asymmetry =
+    node["junction_mixed_min_occupancy_asymmetry"]
+      ? node["junction_mixed_min_occupancy_asymmetry"].as<double>()
+      : 0.30;
+  config.junction_mixed_min_normal_variation =
+    node["junction_mixed_min_normal_variation"]
+      ? node["junction_mixed_min_normal_variation"].as<double>()
+      : 0.20;
+  config.junction_mixed_max_opposite_face_pair_ratio =
+    node["junction_mixed_max_opposite_face_pair_ratio"]
+      ? node["junction_mixed_max_opposite_face_pair_ratio"].as<double>()
+      : 0.67;
+  config.junction_mixed_scored_min_neighbor_count =
+    node["junction_mixed_scored_min_neighbor_count"] ? node["junction_mixed_scored_min_neighbor_count"].as<int>() : 8;
+  config.junction_mixed_scored_min_cluster_count =
+    node["junction_mixed_scored_min_cluster_count"] ? node["junction_mixed_scored_min_cluster_count"].as<int>() : 2;
+  config.junction_mixed_scored_min_junction_score =
+    node["junction_mixed_scored_min_junction_score"]
+      ? node["junction_mixed_scored_min_junction_score"].as<double>()
+      : 0.30;
+  config.junction_mixed_scored_min_orientation_dispersion =
+    node["junction_mixed_scored_min_orientation_dispersion"]
+      ? node["junction_mixed_scored_min_orientation_dispersion"].as<double>()
+      : 0.35;
+  config.junction_mixed_scored_max_dominant_fraction =
+    node["junction_mixed_scored_max_dominant_fraction"]
+      ? node["junction_mixed_scored_max_dominant_fraction"].as<double>()
+      : 0.62;
+  config.junction_mixed_scored_min_occupancy_asymmetry =
+    node["junction_mixed_scored_min_occupancy_asymmetry"]
+      ? node["junction_mixed_scored_min_occupancy_asymmetry"].as<double>()
+      : 0.18;
+  config.junction_mixed_scored_min_normal_variation =
+    node["junction_mixed_scored_min_normal_variation"]
+      ? node["junction_mixed_scored_min_normal_variation"].as<double>()
+      : 0.10;
+  config.junction_mixed_scored_threshold =
+    node["junction_mixed_scored_threshold"] ? node["junction_mixed_scored_threshold"].as<double>() : 0.66;
   config.save_top_k = node["save_top_k"] ? node["save_top_k"].as<int>() : 200;
   config.export_interesting_voxels =
     node["export_interesting_voxels"] ? node["export_interesting_voxels"].as<bool>() : true;
@@ -720,6 +1194,7 @@ AnalysisConfig LoadAnalysisConfig(const std::string& path)
     throw std::runtime_error("min_points_per_voxel must be >= 3");
   }
   config.ranking_mode = NormalizeRankingMode(config.ranking_mode);
+  config.junction_mixed_relabel_mode = NormalizeJunctionMixedRelabelMode(config.junction_mixed_relabel_mode);
   return config;
 }
 
@@ -890,6 +1365,7 @@ std::vector<VoxelMetrics> RunVoxelMorphologyAnalysis(const PointCloud& cloud, co
   }
 
   ComputeContextMetrics(&metrics);
+  ApplyDerivedLabelRefinement(&metrics, config);
   return metrics;
 }
 
@@ -922,12 +1398,14 @@ void SaveAnalysisResults(
 
   {
     std::ofstream csv(output_dir / "voxel_metrics.csv");
-    csv << "vx,vy,vz,center_x,center_y,center_z,num_points,label,"
+    csv << "vx,vy,vz,center_x,center_y,center_z,num_points,base_label,label,"
            "eig1,eig2,eig3,linearity,planarity,scattering,anisotropy,omnivariance,"
            "gaussian_avg_mahalanobis2,gaussian_center_mahalanobis2,gaussian_avg_euclidean,gaussian_center_advantage,"
            "shell_avg_residual,shell_center_residual,shell_avg_radius,shell_center_penalty,"
            "occupied_face_count,occupied_face_ratio,opposite_face_pair_ratio,normal_variation,occupancy_asymmetry,"
-           "planar_context_penalty,corner_context_bonus\n";
+           "planar_context_penalty,corner_context_bonus,junction_neighbor_count,junction_cluster_count,"
+           "junction_entropy,junction_dominant_fraction,junction_orientation_dispersion,junction_score,"
+           "junction_mixed_relabel_score\n";
     for (const auto& metric : metrics_by_key)
     {
       csv << metric.key.x << ','
@@ -937,6 +1415,7 @@ void SaveAnalysisResults(
           << FormatDouble(metric.center.y()) << ','
           << FormatDouble(metric.center.z()) << ','
           << metric.stats.num_points << ','
+          << metric.stats.base_label << ','
           << metric.stats.label << ','
           << FormatDouble(metric.stats.eigenvalues(0)) << ','
           << FormatDouble(metric.stats.eigenvalues(1)) << ','
@@ -960,7 +1439,14 @@ void SaveAnalysisResults(
           << FormatDouble(metric.context.normal_variation) << ','
           << FormatDouble(metric.context.occupancy_asymmetry) << ','
           << FormatDouble(metric.context.planar_context_penalty) << ','
-          << FormatDouble(metric.context.corner_context_bonus) << '\n';
+          << FormatDouble(metric.context.corner_context_bonus) << ','
+          << metric.context.junction_neighbor_count << ','
+          << metric.context.junction_cluster_count << ','
+          << FormatDouble(metric.context.junction_entropy) << ','
+          << FormatDouble(metric.context.junction_dominant_fraction) << ','
+          << FormatDouble(metric.context.junction_orientation_dispersion) << ','
+          << FormatDouble(metric.context.junction_score) << ','
+          << FormatDouble(metric.context.junction_mixed_relabel_score) << '\n';
     }
   }
 
@@ -989,9 +1475,11 @@ void SaveAnalysisResults(
 
   {
     std::ofstream csv(output_dir / "interesting_voxels.csv");
-    csv << "rank,vx,vy,vz,label,num_points,gaussian_center_advantage,shell_center_penalty,"
+    csv << "rank,vx,vy,vz,base_label,label,num_points,gaussian_center_advantage,shell_center_penalty,"
            "ranking_adjustment,morphology_filter_penalty,context_mode_contribution,"
-           "normal_variation,occupancy_asymmetry,planar_context_penalty,corner_context_bonus,total_score\n";
+           "junction_mode_contribution,normal_variation,occupancy_asymmetry,planar_context_penalty,"
+           "corner_context_bonus,junction_cluster_count,junction_orientation_dispersion,junction_score,"
+           "junction_mixed_relabel_score,total_score\n";
     const std::size_t limit =
       std::min<std::size_t>(ranked.size(), static_cast<std::size_t>(std::max(config.save_top_k, 0)));
     for (std::size_t rank = 0; rank < limit; ++rank)
@@ -1001,6 +1489,7 @@ void SaveAnalysisResults(
           << metric.key.x << ','
           << metric.key.y << ','
           << metric.key.z << ','
+          << metric.stats.base_label << ','
           << metric.stats.label << ','
           << metric.stats.num_points << ','
           << FormatDouble(metric.gaussian.center_advantage) << ','
@@ -1008,17 +1497,24 @@ void SaveAnalysisResults(
           << FormatDouble(ComputeRankingAdjustment(metric, config.ranking_mode)) << ','
           << FormatDouble(ComputeThinPlanarFilterPenalty(metric, config.ranking_mode)) << ','
           << FormatDouble(ComputeContextModeContribution(metric, config.ranking_mode)) << ','
+          << FormatDouble(ComputeJunctionModeContribution(metric, config.ranking_mode)) << ','
           << FormatDouble(metric.context.normal_variation) << ','
           << FormatDouble(metric.context.occupancy_asymmetry) << ','
           << FormatDouble(metric.context.planar_context_penalty) << ','
           << FormatDouble(metric.context.corner_context_bonus) << ','
+          << metric.context.junction_cluster_count << ','
+          << FormatDouble(metric.context.junction_orientation_dispersion) << ','
+          << FormatDouble(metric.context.junction_score) << ','
+          << FormatDouble(metric.context.junction_mixed_relabel_score) << ','
           << BuildInterestingVoxelScoreString(metric, config.ranking_mode) << '\n';
     }
   }
 
   {
+    std::map<std::string, int> base_label_counts;
     std::map<std::string, int> label_counts;
     std::map<std::string, int> interesting_label_counts;
+    std::map<std::string, int> interesting_base_label_counts;
     double average_gaussian_center_advantage = 0.0;
     double average_shell_center_penalty = 0.0;
     double average_filter_penalty = 0.0;
@@ -1028,8 +1524,15 @@ void SaveAnalysisResults(
     double average_occupancy_asymmetry = 0.0;
     double average_planar_context_penalty = 0.0;
     double average_corner_context_bonus = 0.0;
+    double average_junction_cluster_count = 0.0;
+    double average_junction_entropy = 0.0;
+    double average_junction_dominant_fraction = 0.0;
+    double average_junction_orientation_dispersion = 0.0;
+    double average_junction_score = 0.0;
+    double average_junction_mixed_relabel_score = 0.0;
     for (const auto& metric : metrics)
     {
+      ++base_label_counts[metric.stats.base_label];
       ++label_counts[metric.stats.label];
       average_gaussian_center_advantage += metric.gaussian.center_advantage;
       average_shell_center_penalty += metric.shell.center_penalty;
@@ -1040,6 +1543,12 @@ void SaveAnalysisResults(
       average_occupancy_asymmetry += metric.context.occupancy_asymmetry;
       average_planar_context_penalty += metric.context.planar_context_penalty;
       average_corner_context_bonus += metric.context.corner_context_bonus;
+      average_junction_cluster_count += static_cast<double>(metric.context.junction_cluster_count);
+      average_junction_entropy += metric.context.junction_entropy;
+      average_junction_dominant_fraction += metric.context.junction_dominant_fraction;
+      average_junction_orientation_dispersion += metric.context.junction_orientation_dispersion;
+      average_junction_score += metric.context.junction_score;
+      average_junction_mixed_relabel_score += metric.context.junction_mixed_relabel_score;
     }
 
     const double denom = static_cast<double>(std::max<std::size_t>(metrics.size(), 1));
@@ -1052,13 +1561,30 @@ void SaveAnalysisResults(
     average_occupancy_asymmetry /= denom;
     average_planar_context_penalty /= denom;
     average_corner_context_bonus /= denom;
+    average_junction_cluster_count /= denom;
+    average_junction_entropy /= denom;
+    average_junction_dominant_fraction /= denom;
+    average_junction_orientation_dispersion /= denom;
+    average_junction_score /= denom;
+    average_junction_mixed_relabel_score /= denom;
 
     const std::size_t interesting_limit =
       std::min<std::size_t>(ranked.size(), static_cast<std::size_t>(std::max(config.save_top_k, 0)));
     for (std::size_t rank = 0; rank < interesting_limit; ++rank)
     {
+      ++interesting_base_label_counts[ranked[rank].stats.base_label];
       ++interesting_label_counts[ranked[rank].stats.label];
     }
+
+    const int junction_like_mixed_count = label_counts["junction_like_mixed"];
+    const int combined_corner_or_junction_count =
+      label_counts["corner_like"] + label_counts["junction_like_mixed"];
+    const int planar_reduction_count = base_label_counts["planar"] - label_counts["planar"];
+    const int interesting_junction_like_mixed_count = interesting_label_counts["junction_like_mixed"];
+    const int interesting_combined_corner_or_junction_count =
+      interesting_label_counts["corner_like"] + interesting_label_counts["junction_like_mixed"];
+    const int interesting_planar_reduction_count =
+      interesting_base_label_counts["planar"] - interesting_label_counts["planar"];
 
     std::ofstream summary(output_dir / "summary.txt");
     summary << "input_points: " << input_points << '\n';
@@ -1069,6 +1595,38 @@ void SaveAnalysisResults(
     summary << "shape_exponent: " << FormatDouble(config.shape_exponent) << '\n';
     summary << "axis_scale_quantile: " << FormatDouble(config.axis_scale_quantile) << '\n';
     summary << "ranking_mode: " << config.ranking_mode << '\n';
+    summary << "enable_junction_mixed_relabel: " << (config.enable_junction_mixed_relabel ? "true" : "false")
+            << '\n';
+    summary << "junction_mixed_relabel_mode: " << config.junction_mixed_relabel_mode << '\n';
+    summary << "junction_mixed_min_neighbor_count: " << config.junction_mixed_min_neighbor_count << '\n';
+    summary << "junction_mixed_min_cluster_count: " << config.junction_mixed_min_cluster_count << '\n';
+    summary << "junction_mixed_min_score: " << FormatDouble(config.junction_mixed_min_score) << '\n';
+    summary << "junction_mixed_min_orientation_dispersion: "
+            << FormatDouble(config.junction_mixed_min_orientation_dispersion) << '\n';
+    summary << "junction_mixed_max_dominant_fraction: "
+            << FormatDouble(config.junction_mixed_max_dominant_fraction) << '\n';
+    summary << "junction_mixed_min_occupancy_asymmetry: "
+            << FormatDouble(config.junction_mixed_min_occupancy_asymmetry) << '\n';
+    summary << "junction_mixed_min_normal_variation: "
+            << FormatDouble(config.junction_mixed_min_normal_variation) << '\n';
+    summary << "junction_mixed_max_opposite_face_pair_ratio: "
+            << FormatDouble(config.junction_mixed_max_opposite_face_pair_ratio) << '\n';
+    summary << "junction_mixed_scored_min_neighbor_count: "
+            << config.junction_mixed_scored_min_neighbor_count << '\n';
+    summary << "junction_mixed_scored_min_cluster_count: "
+            << config.junction_mixed_scored_min_cluster_count << '\n';
+    summary << "junction_mixed_scored_min_junction_score: "
+            << FormatDouble(config.junction_mixed_scored_min_junction_score) << '\n';
+    summary << "junction_mixed_scored_min_orientation_dispersion: "
+            << FormatDouble(config.junction_mixed_scored_min_orientation_dispersion) << '\n';
+    summary << "junction_mixed_scored_max_dominant_fraction: "
+            << FormatDouble(config.junction_mixed_scored_max_dominant_fraction) << '\n';
+    summary << "junction_mixed_scored_min_occupancy_asymmetry: "
+            << FormatDouble(config.junction_mixed_scored_min_occupancy_asymmetry) << '\n';
+    summary << "junction_mixed_scored_min_normal_variation: "
+            << FormatDouble(config.junction_mixed_scored_min_normal_variation) << '\n';
+    summary << "junction_mixed_scored_threshold: "
+            << FormatDouble(config.junction_mixed_scored_threshold) << '\n';
     summary << "interesting_top_k: " << interesting_limit << '\n';
     summary << "average_gaussian_center_advantage: " << FormatDouble(average_gaussian_center_advantage) << '\n';
     summary << "average_shell_center_penalty: " << FormatDouble(average_shell_center_penalty) << '\n';
@@ -1079,6 +1637,26 @@ void SaveAnalysisResults(
     summary << "average_occupancy_asymmetry: " << FormatDouble(average_occupancy_asymmetry) << '\n';
     summary << "average_planar_context_penalty: " << FormatDouble(average_planar_context_penalty) << '\n';
     summary << "average_corner_context_bonus: " << FormatDouble(average_corner_context_bonus) << '\n';
+    summary << "average_junction_cluster_count: " << FormatDouble(average_junction_cluster_count) << '\n';
+    summary << "average_junction_entropy: " << FormatDouble(average_junction_entropy) << '\n';
+    summary << "average_junction_dominant_fraction: " << FormatDouble(average_junction_dominant_fraction) << '\n';
+    summary << "average_junction_orientation_dispersion: " << FormatDouble(average_junction_orientation_dispersion)
+            << '\n';
+    summary << "average_junction_score: " << FormatDouble(average_junction_score) << '\n';
+    summary << "average_junction_mixed_relabel_score: "
+            << FormatDouble(average_junction_mixed_relabel_score) << '\n';
+    summary << "junction_like_mixed_count: " << junction_like_mixed_count << '\n';
+    summary << "combined_corner_or_junction_count: " << combined_corner_or_junction_count << '\n';
+    summary << "planar_reduction_count: " << planar_reduction_count << '\n';
+    summary << "interesting_junction_like_mixed_count: " << interesting_junction_like_mixed_count << '\n';
+    summary << "interesting_combined_corner_or_junction_count: "
+            << interesting_combined_corner_or_junction_count << '\n';
+    summary << "interesting_planar_reduction_count: " << interesting_planar_reduction_count << '\n';
+    summary << "base_label_counts:\n";
+    for (const auto& label_count : base_label_counts)
+    {
+      summary << "  " << label_count.first << ": " << label_count.second << '\n';
+    }
     summary << "label_counts:\n";
     for (const auto& label_count : label_counts)
     {

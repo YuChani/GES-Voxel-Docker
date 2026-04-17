@@ -30,6 +30,24 @@ struct AnalysisConfig
   double axis_scale_quantile = 0.9;
   double axis_scale_min = 0.05;
   std::string ranking_mode = "score_only";
+  bool enable_junction_mixed_relabel = false;
+  std::string junction_mixed_relabel_mode = "hard_threshold";
+  int junction_mixed_min_neighbor_count = 10;
+  int junction_mixed_min_cluster_count = 3;
+  double junction_mixed_min_score = 0.72;
+  double junction_mixed_min_orientation_dispersion = 0.48;
+  double junction_mixed_max_dominant_fraction = 0.38;
+  double junction_mixed_min_occupancy_asymmetry = 0.30;
+  double junction_mixed_min_normal_variation = 0.20;
+  double junction_mixed_max_opposite_face_pair_ratio = 0.67;
+  int junction_mixed_scored_min_neighbor_count = 8;
+  int junction_mixed_scored_min_cluster_count = 2;
+  double junction_mixed_scored_min_junction_score = 0.30;
+  double junction_mixed_scored_min_orientation_dispersion = 0.35;
+  double junction_mixed_scored_max_dominant_fraction = 0.62;
+  double junction_mixed_scored_min_occupancy_asymmetry = 0.18;
+  double junction_mixed_scored_min_normal_variation = 0.10;
+  double junction_mixed_scored_threshold = 0.66;
   int save_top_k = 200;
   bool export_interesting_voxels = true;
   int export_top_k_pcd = 30;
@@ -71,6 +89,7 @@ struct VoxelStats
   double scattering = 0.0;
   double anisotropy = 0.0;
   double omnivariance = 0.0;
+  std::string base_label = "unknown";
   std::string label = "unknown";
 };
 
@@ -99,6 +118,13 @@ struct ContextMetrics
   double occupancy_asymmetry = 0.0;
   double planar_context_penalty = 0.0;
   double corner_context_bonus = 0.0;
+  int junction_neighbor_count = 0;
+  int junction_cluster_count = 0;
+  double junction_entropy = 0.0;
+  double junction_dominant_fraction = 0.0;
+  double junction_orientation_dispersion = 0.0;
+  double junction_score = 0.0;
+  double junction_mixed_relabel_score = 0.0;
 };
 
 struct VoxelMetrics
