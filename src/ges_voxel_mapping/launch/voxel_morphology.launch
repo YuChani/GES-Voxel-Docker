@@ -1,0 +1,11 @@
+<launch>
+  <arg name="config" default="$(find ges_voxel_mapping)/config/voxel_morphology.yaml" />
+  <arg name="input" default="" />
+  <arg name="output" default="" />
+
+  <node pkg="ges_voxel_mapping"
+        type="voxel_morphology_analyzer"
+        name="voxel_morphology_analyzer"
+        output="screen"
+        args="--config $(arg config) --input $(arg input) --output $(arg output)" />
+</launch>

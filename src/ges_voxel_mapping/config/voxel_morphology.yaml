@@ -1,0 +1,14 @@
+input_path: ""
+output_dir: "results/voxel_morphology"
+input_mode: "auto"
+voxel_size: 1.0
+min_points_per_voxel: 20
+max_points: -1
+max_voxels: -1
+gaussian_regularization: 0.001
+shape_exponent: 1.2
+axis_scale_quantile: 0.9
+axis_scale_min: 0.05
+save_top_k: 200
+export_interesting_voxels: true
+export_top_k_pcd: 30

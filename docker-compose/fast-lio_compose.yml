@@ -1,0 +1,23 @@
+services:
+  ges-voxel-dev:
+    image: ${IMAGE_NAME:-ges-voxel-noetic}
+    build:
+      context: ../
+      dockerfile: ./dockerfile/fast-lio.Dockerfile
+      args:
+        BUILD_FAST_LIO: ${BUILD_FAST_LIO:-0}
+    container_name: ${CONTAINER_NAME:-ges-voxel-dev}
+    stdin_open: true
+    tty: true
+    network_mode: host
+    ipc: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - ../:/root/catkin_ws
+      - ../datasets:/root/datasets
+      - ../results:/root/results
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    working_dir: /root/catkin_ws
+    command: bash

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libges_voxel_core.a CMakeFiles/ges_voxel_core.dir/src/voxel_analysis.cpp.o
+/usr/bin/ranlib libges_voxel_core.a

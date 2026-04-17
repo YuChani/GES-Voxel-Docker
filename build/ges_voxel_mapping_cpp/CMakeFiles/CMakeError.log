@@ -1,0 +1,51 @@
+The MPI test test_mpi for C in mode normal failed to compile with the following output:
+Change Dir: /home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_ee536/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_ee536.dir/build.make CMakeFiles/cmTC_ee536.dir/build
+gmake[1]: Entering directory '/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_ee536.dir/test_mpi.c.o
+/usr/bin/cc  -isystem /usr/lib/x86_64-linux-gnu/openmpi/include/openmpi  -o CMakeFiles/cmTC_ee536.dir/test_mpi.c.o -c /usr/share/cmake-3.22/Modules/FindMPI/test_mpi.c
+/usr/share/cmake-3.22/Modules/FindMPI/test_mpi.c:1:10: fatal error: mpi.h: No such file or directory
+    1 | #include <mpi.h>
+      |          ^~~~~~~
+compilation terminated.
+gmake[1]: *** [CMakeFiles/cmTC_ee536.dir/build.make:78: CMakeFiles/cmTC_ee536.dir/test_mpi.c.o] Error 1
+gmake[1]: Leaving directory '/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp'
+gmake: *** [Makefile:127: cmTC_ee536/fast] Error 2
+
+
+
+The MPI test test_mpi for C in mode normal failed to compile with the following output:
+Change Dir: /home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_e5441/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_e5441.dir/build.make CMakeFiles/cmTC_e5441.dir/build
+gmake[1]: Entering directory '/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_e5441.dir/test_mpi.c.o
+/usr/bin/cc  -isystem /usr/lib/x86_64-linux-gnu/openmpi/include/openmpi  -o CMakeFiles/cmTC_e5441.dir/test_mpi.c.o -c /usr/share/cmake-3.22/Modules/FindMPI/test_mpi.c
+/usr/share/cmake-3.22/Modules/FindMPI/test_mpi.c:1:10: fatal error: mpi.h: No such file or directory
+    1 | #include <mpi.h>
+      |          ^~~~~~~
+compilation terminated.
+gmake[1]: *** [CMakeFiles/cmTC_e5441.dir/build.make:78: CMakeFiles/cmTC_e5441.dir/test_mpi.c.o] Error 1
+gmake[1]: Leaving directory '/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp'
+gmake: *** [Makefile:127: cmTC_e5441/fast] Error 2
+
+
+
+The MPI test test_mpi for C in mode normal failed to compile with the following output:
+Change Dir: /home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_aed57/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_aed57.dir/build.make CMakeFiles/cmTC_aed57.dir/build
+gmake[1]: Entering directory '/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_aed57.dir/test_mpi.c.o
+/usr/bin/cc  -isystem /usr/lib/x86_64-linux-gnu/openmpi/include/openmpi  -o CMakeFiles/cmTC_aed57.dir/test_mpi.c.o -c /usr/share/cmake-3.22/Modules/FindMPI/test_mpi.c
+/usr/share/cmake-3.22/Modules/FindMPI/test_mpi.c:1:10: fatal error: mpi.h: No such file or directory
+    1 | #include <mpi.h>
+      |          ^~~~~~~
+compilation terminated.
+gmake[1]: *** [CMakeFiles/cmTC_aed57.dir/build.make:78: CMakeFiles/cmTC_aed57.dir/test_mpi.c.o] Error 1
+gmake[1]: Leaving directory '/home/chani/personal/CVRL_SLAM_Docker/GES-Voxel-Docker/build/ges_voxel_mapping_cpp/CMakeFiles/CMakeTmp'
+gmake: *** [Makefile:127: cmTC_aed57/fast] Error 2
+
+
+
