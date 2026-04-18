@@ -8,6 +8,7 @@
 
 ## Open These First
 
+- `final_review_instructions.md`
 - `contact_sheets/scored_only_relabeled_contact_sheet.png`
 - `contact_sheets/hard_only_relabeled_contact_sheet.png`
 - `annotation_template.csv`
@@ -22,6 +23,7 @@
 3. Compare with `hard_only_relabeled` contact sheet to see whether scored-only looks more plausible.
 4. For uncertain cases, open the per-voxel `overlay_preview.png`, then `neighborhood_preview.png`, then the original PCD paths listed in `annotation_template.csv`.
 5. Fill `annotation_template.csv`, then complete `decision_template.md`.
+6. Use `final_review_instructions.md` as the final continue / pivot / stop rule.
 
 ## Group Preview Locations
 
