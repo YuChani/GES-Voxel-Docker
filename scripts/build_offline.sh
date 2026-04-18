@@ -13,3 +13,4 @@ cmake --build "${BUILD_DIR}" -j"$(nproc)"
 
 echo "Built C++ offline executable:"
 echo "  ${BUILD_DIR}/voxel_morphology_analyzer"
+echo "  ${BUILD_DIR}/voxel_primitive_comparison"

@@ -1,0 +1,13 @@
+voxel_id,key_x,key_y,key_z,selection_tag,base_label,point_count,selection_note
+-4_-10_6,-4,-10,6,boundary_candidate_proxy,linear,31,base_label=linear, boundary/mixed proxy used only for Stage-1 selection
+2_15_-2,2,15,-2,boundary_candidate_proxy,linear,21,base_label=linear, boundary/mixed proxy used only for Stage-1 selection
+2_-9_4,2,-9,4,boundary_candidate_proxy,linear,20,base_label=linear, boundary/mixed proxy used only for Stage-1 selection
+1_-9_4,1,-9,4,boundary_candidate_proxy,linear,16,base_label=linear, boundary/mixed proxy used only for Stage-1 selection
+6_0_2,6,0,2,corner_candidate,corner_like,147,base_label=corner_like, corner/crease representative
+6_-1_2,6,-1,2,corner_candidate,corner_like,141,base_label=corner_like, corner/crease representative
+3_-5_4,3,-5,4,corner_candidate,corner_like,96,base_label=corner_like, corner/crease representative
+6_14_1,6,14,1,corner_candidate,corner_like,26,base_label=corner_like, corner/crease representative
+1_-2_-2,1,-2,-2,planar_candidate,planar,1447,base_label=planar, high planarity representative
+0_2_-2,0,2,-2,planar_candidate,planar,917,base_label=planar, high planarity representative
+-2_-3_-2,-2,-3,-2,planar_candidate,planar,644,base_label=planar, high planarity representative
+6_2_3,6,2,3,planar_candidate,planar,170,base_label=planar, high planarity representative

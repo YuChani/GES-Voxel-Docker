@@ -2,6 +2,13 @@
 
 `ges_voxel_mapping`은 ROS1 catkin 패키지이지만, 첫 단계는 ROS runtime 의존도를 최소화한 오프라인 실험 패키지로 설계했다.
 
+## Branch Transition
+
+- `junction_like_mixed` semantic relabel line은 archive로 보존한다.
+- 중단 이유와 새 질문은 [docs/direct_primitive_reset_note.md](../../docs/direct_primitive_reset_note.md)에 정리했다.
+- direct primitive validation 단계 계획은 [docs/direct_primitive_validation_plan.md](../../docs/direct_primitive_validation_plan.md)를 본다.
+- 새 Stage-1 결과는 `results/direct_primitive_validation/` 아래에 저장한다.
+
 ## 현재 포함된 실행기
 
 - `voxel_morphology_analyzer`
@@ -59,6 +66,17 @@
   - aggregate output:
     - `results/context_refinement_scored_review/relabeled_review_summary.csv`
     - `results/context_refinement_scored_review/relabeled_review_summary.md`
+- `voxel_primitive_comparison`
+  - direct primitive validation Stage-1용 C++ offline executable
+  - Gaussian/NDT-style center fit과 surface-shell scaffold를 같은 voxel set에서 비교
+  - output:
+    - `results/direct_primitive_validation/<run>/summary.md`
+    - `results/direct_primitive_validation/<run>/selected_voxels.csv`
+    - `results/direct_primitive_validation/<run>/voxel_comparison.csv`
+    - `results/direct_primitive_validation/<run>/loaded_files.txt`
+- `scripts/run_direct_primitive_validation.py`
+  - `voxel_primitive_comparison` wrapper
+  - small representative voxel set dry-run 실행용
 
 ## 현재 primitive 구현 수준
 
@@ -74,8 +92,8 @@
 
 - exact GES/GND fitting
 - residual heatmap export
-- frame-to-local-map registration benchmark
-- FAST-LIO local map primitive 교체
+- local registration residual comparison
+- Stage-1/2가 충분히 정당화될 때만 system integration 검토
 
 ## 실행 예시
 
@@ -324,6 +342,29 @@ python3 ./scripts/build_final_manual_review_package.py \
 
 기본적으로 Open3D headless offscreen 렌더를 먼저 시도하고, 현재 환경에서 불가능하면
 deterministic projection PNG로 자동 fallback 합니다.
+
+direct primitive validation Stage-1 dry-run:
+
+```bash
+./scripts/build_offline.sh
+python3 ./scripts/run_direct_primitive_validation.py \
+  --input ./prev/BALM/datas/benchmark_realworld/full0.pcd \
+  --output-root ./results/direct_primitive_validation \
+  --run-name full0_stage1 \
+  --voxel-size 1.0 \
+  --min-points-per-voxel 15 \
+  --max-voxels 12 \
+  --per-category-limit 4 \
+  --shell-shape-exponent 1.0 \
+  --shell-axis-scale-quantile 0.90
+```
+
+이 Stage-1은 exact GES/GND 구현이 아니라 다음 proxy scaffold다.
+
+1. 기존 offline PCD loader 재사용
+2. voxel별 Gaussian/NDT-style mean/covariance baseline 계산
+3. PCA local frame + quantile axis scale + `L_p` shell residual로 surface primitive proxy 계산
+4. small representative voxel set에서 두 residual family를 같은 CSV/summary 포맷으로 export
 
 ## ranking/filter mode
 

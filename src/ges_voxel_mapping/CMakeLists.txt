@@ -43,6 +43,20 @@ if(catkin_FOUND AND GES_VOXEL_ENABLE_CATKIN)
   target_link_libraries(ges_voxel_core ${catkin_LIBRARIES})
 endif()
 
+add_library(ges_direct_primitive_core
+  src/direct_primitive_validation.cpp
+)
+
+target_link_libraries(ges_direct_primitive_core
+  ges_voxel_core
+  ${PCL_LIBRARIES}
+  yaml-cpp
+)
+
+if(catkin_FOUND AND GES_VOXEL_ENABLE_CATKIN)
+  target_link_libraries(ges_direct_primitive_core ${catkin_LIBRARIES})
+endif()
+
 add_executable(voxel_morphology_analyzer
   src/voxel_morphology_main.cpp
 )
@@ -60,8 +74,23 @@ if(catkin_FOUND AND GES_VOXEL_ENABLE_CATKIN)
   target_link_libraries(voxel_morphology_analyzer ${catkin_LIBRARIES})
 endif()
 
+add_executable(voxel_primitive_comparison
+  src/voxel_primitive_comparison_main.cpp
+)
+
+target_link_libraries(voxel_primitive_comparison
+  ges_direct_primitive_core
+  ges_voxel_core
+  ${PCL_LIBRARIES}
+  yaml-cpp
+)
+
 if(catkin_FOUND AND GES_VOXEL_ENABLE_CATKIN)
-  install(TARGETS ges_voxel_core voxel_morphology_analyzer
+  target_link_libraries(voxel_primitive_comparison ${catkin_LIBRARIES})
+endif()
+
+if(catkin_FOUND AND GES_VOXEL_ENABLE_CATKIN)
+  install(TARGETS ges_voxel_core ges_direct_primitive_core voxel_morphology_analyzer voxel_primitive_comparison
     ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
     LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
     RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
