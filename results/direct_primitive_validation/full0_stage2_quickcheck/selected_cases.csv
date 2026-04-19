@@ -1,0 +1,13 @@
+voxel_id,key_x,key_y,key_z,selection_tag,base_label,point_count,local_neighborhood_point_count,selection_note,gaussian_normalized_residual_by_spread,shell_normalized_residual_by_spread,normalized_residual_gap
+-4_-10_6,-4,-10,6,boundary_candidate_proxy,linear,31,157,"base_label=linear, boundary/mixed proxy used only for Stage-2 quickcheck",2.480964,0.677319,1.803644
+2_15_-2,2,15,-2,boundary_candidate_proxy,linear,21,253,"base_label=linear, boundary/mixed proxy used only for Stage-2 quickcheck",2.477980,0.654227,1.823754
+2_-9_4,2,-9,4,boundary_candidate_proxy,linear,20,423,"base_label=linear, boundary/mixed proxy used only for Stage-2 quickcheck",2.682111,0.368745,2.313366
+1_-9_4,1,-9,4,boundary_candidate_proxy,linear,16,625,"base_label=linear, boundary/mixed proxy used only for Stage-2 quickcheck",2.383596,0.962174,1.421422
+6_0_2,6,0,2,corner_candidate,corner_like,147,2188,"base_label=corner_like, corner/crease representative",1.703379,1.046346,0.657033
+6_-1_2,6,-1,2,corner_candidate,corner_like,141,2215,"base_label=corner_like, corner/crease representative",1.713154,0.994494,0.718660
+3_-5_4,3,-5,4,corner_candidate,corner_like,96,687,"base_label=corner_like, corner/crease representative",1.659343,1.124568,0.534775
+6_14_1,6,14,1,corner_candidate,corner_like,26,215,"base_label=corner_like, corner/crease representative",1.637908,1.061580,0.576328
+1_-2_-2,1,-2,-2,planar_candidate,planar,1447,8480,"base_label=planar, high planarity representative",1.959498,0.545830,1.413668
+0_2_-2,0,2,-2,planar_candidate,planar,917,7041,"base_label=planar, high planarity representative",1.964427,0.618594,1.345833
+-2_-3_-2,-2,-3,-2,planar_candidate,planar,644,5150,"base_label=planar, high planarity representative",1.965166,0.620142,1.345024
+6_2_3,6,2,3,planar_candidate,planar,170,1346,"base_label=planar, high planarity representative",1.924136,0.816015,1.108121

@@ -1,0 +1,1 @@
+./prev/BALM/datas/benchmark_realworld/full0.pcd | points=73452 | fields=x;y;z;intensity;normal_x;normal_y;normal_z;curvature | intensity=yes

@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -21,6 +20,7 @@ namespace
 {
 
 constexpr double kEpsilon = 1e-9;
+constexpr double kPi = 3.14159265358979323846;
 
 struct PrimitiveVoxelBucket
 {
@@ -51,6 +51,7 @@ struct GaussianFit
   double voxel_center_mahalanobis2 = 0.0;
   double average_center_distance = 0.0;
   double condition_ratio = 0.0;
+  Eigen::Matrix3d covariance_inverse = Eigen::Matrix3d::Identity();
 };
 
 struct SurfaceShellFit
@@ -63,6 +64,30 @@ struct SurfaceShellFit
   double axis_condition = 0.0;
 };
 
+struct PrimitiveModelBundle
+{
+  PrimitiveVoxelBucket bucket;
+  PrimitiveStats stats;
+  GaussianFit gaussian;
+  SurfaceShellFit shell;
+  PrimitiveVoxelComparison comparison;
+};
+
+struct ReferencePrimitive
+{
+  PrimitiveStats stats;
+  GaussianFit gaussian;
+  SurfaceShellFit shell;
+};
+
+struct PerturbationSpec
+{
+  std::string name;
+  Eigen::Vector3d translation = Eigen::Vector3d::Zero();
+  Eigen::Vector3d rotation_axis = Eigen::Vector3d::UnitZ();
+  double rotation_radians = 0.0;
+};
+
 std::string FormatDouble(double value)
 {
   std::ostringstream stream;
@@ -73,6 +98,19 @@ std::string FormatDouble(double value)
 std::string VoxelId(const VoxelKey& key)
 {
   return std::to_string(key.x) + "_" + std::to_string(key.y) + "_" + std::to_string(key.z);
+}
+
+bool VoxelKeyLess(const VoxelKey& lhs, const VoxelKey& rhs)
+{
+  if (lhs.x != rhs.x)
+  {
+    return lhs.x < rhs.x;
+  }
+  if (lhs.y != rhs.y)
+  {
+    return lhs.y < rhs.y;
+  }
+  return lhs.z < rhs.z;
 }
 
 VoxelKey MakeVoxelKey(const Eigen::Vector3d& point, double voxel_size)
@@ -219,18 +257,18 @@ GaussianFit FitGaussianPrimitive(
 
   Eigen::Matrix3d covariance_reg = stats.covariance;
   covariance_reg.diagonal().array() += regularization;
-  const Eigen::Matrix3d covariance_inv = covariance_reg.inverse();
+  fit.covariance_inverse = covariance_reg.inverse();
 
   for (const auto& point : voxel.points)
   {
-    fit.average_mahalanobis2 += MahalanobisSquared(point, stats.mean, covariance_inv);
+    fit.average_mahalanobis2 += MahalanobisSquared(point, stats.mean, fit.covariance_inverse);
     fit.average_center_distance += (point - stats.mean).norm();
   }
 
   const double count = static_cast<double>(std::max<std::size_t>(voxel.points.size(), 1));
   fit.average_mahalanobis2 /= count;
   fit.average_center_distance /= count;
-  fit.voxel_center_mahalanobis2 = MahalanobisSquared(voxel.center, stats.mean, covariance_inv);
+  fit.voxel_center_mahalanobis2 = MahalanobisSquared(voxel.center, stats.mean, fit.covariance_inverse);
   fit.condition_ratio =
     std::sqrt(std::max(stats.eigenvalues(2), 0.0)) / std::sqrt(std::max(stats.eigenvalues(0), kEpsilon));
   return fit;
@@ -351,24 +389,15 @@ std::vector<std::size_t> SelectCandidateIndices(
 
     if (voxel.base_label == "planar")
     {
-      planar_candidates.push_back(CandidateRef{
-        index,
-        ComputePlanarSelectionScore(voxel),
-        voxel.point_count});
+      planar_candidates.push_back(CandidateRef{index, ComputePlanarSelectionScore(voxel), voxel.point_count});
     }
     else if (voxel.base_label == "corner_like")
     {
-      corner_candidates.push_back(CandidateRef{
-        index,
-        ComputeCornerSelectionScore(voxel),
-        voxel.point_count});
+      corner_candidates.push_back(CandidateRef{index, ComputeCornerSelectionScore(voxel), voxel.point_count});
     }
     else if (voxel.base_label == "linear")
     {
-      boundary_candidates.push_back(CandidateRef{
-        index,
-        ComputeBoundaryProxySelectionScore(voxel),
-        voxel.point_count});
+      boundary_candidates.push_back(CandidateRef{index, ComputeBoundaryProxySelectionScore(voxel), voxel.point_count});
     }
   }
 
@@ -413,7 +442,10 @@ std::vector<std::size_t> SelectCandidateIndices(
       {
         continue;
       }
-      fallback.push_back(CandidateRef{index, static_cast<double>(all_voxels[index].point_count), all_voxels[index].point_count});
+      fallback.push_back(CandidateRef{
+        index,
+        static_cast<double>(all_voxels[index].point_count),
+        all_voxels[index].point_count});
     }
     SortCandidates(&fallback);
     for (const auto& candidate : fallback)
@@ -429,6 +461,23 @@ std::vector<std::size_t> SelectCandidateIndices(
   return selected;
 }
 
+std::string SelectionTagFromBaseLabel(const std::string& base_label)
+{
+  if (base_label == "planar")
+  {
+    return "planar_candidate";
+  }
+  if (base_label == "corner_like")
+  {
+    return "corner_candidate";
+  }
+  if (base_label == "linear")
+  {
+    return "boundary_candidate_proxy";
+  }
+  return "fallback_candidate";
+}
+
 std::string SelectionNote(const PrimitiveVoxelComparison& voxel)
 {
   if (voxel.selection_tag == "planar_candidate")
@@ -441,9 +490,255 @@ std::string SelectionNote(const PrimitiveVoxelComparison& voxel)
   }
   if (voxel.selection_tag == "boundary_candidate_proxy")
   {
-    return "base_label=linear, boundary/mixed proxy used only for Stage-1 selection";
+    return "base_label=linear, boundary/mixed proxy used only for Stage-2 quickcheck";
   }
   return "fallback representative selected by point count";
+}
+
+double ComputeCharacteristicSpreadScale(const PrimitiveStats& stats)
+{
+  const double s1 = std::sqrt(std::max(stats.eigenvalues(0), kEpsilon));
+  const double s2 = std::sqrt(std::max(stats.eigenvalues(1), kEpsilon));
+  const double s3 = std::sqrt(std::max(stats.eigenvalues(2), kEpsilon));
+  return std::max((s1 + s2 + s3) / 3.0, kEpsilon);
+}
+
+double ComputeShellScaleMean(const SurfaceShellFit& shell)
+{
+  return std::max(
+    (shell.axis_scales(0) + shell.axis_scales(1) + shell.axis_scales(2)) / 3.0,
+    kEpsilon);
+}
+
+void FillNormalizedMetrics(
+  PrimitiveVoxelComparison* comparison,
+  const PrimitiveStats& stats,
+  const SurfaceShellFit& shell,
+  double voxel_size)
+{
+  comparison->characteristic_spread_scale = ComputeCharacteristicSpreadScale(stats);
+  comparison->shell_scale_mean = ComputeShellScaleMean(shell);
+  comparison->shell_geometric_average_residual =
+    comparison->shell_average_residual * comparison->shell_scale_mean;
+  comparison->shell_geometric_center_residual =
+    comparison->shell_voxel_center_residual * comparison->shell_scale_mean;
+
+  comparison->gaussian_normalized_residual_by_voxel =
+    comparison->gaussian_average_center_distance / std::max(voxel_size, kEpsilon);
+  comparison->shell_normalized_residual_by_voxel =
+    comparison->shell_geometric_average_residual / std::max(voxel_size, kEpsilon);
+  comparison->gaussian_normalized_residual_by_spread =
+    comparison->gaussian_average_center_distance / comparison->characteristic_spread_scale;
+  comparison->shell_normalized_residual_by_spread =
+    comparison->shell_geometric_average_residual / comparison->characteristic_spread_scale;
+  comparison->normalized_residual_gap =
+    comparison->gaussian_normalized_residual_by_spread -
+    comparison->shell_normalized_residual_by_spread;
+}
+
+std::vector<Eigen::Vector3d> CollectNeighborhoodPoints(
+  const VoxelKey& center_key,
+  int radius_voxels,
+  const std::unordered_map<VoxelKey, std::size_t, VoxelKeyHash>& lookup,
+  const std::vector<PrimitiveVoxelBucket>& buckets)
+{
+  std::vector<Eigen::Vector3d> points;
+  for (int dx = -radius_voxels; dx <= radius_voxels; ++dx)
+  {
+    for (int dy = -radius_voxels; dy <= radius_voxels; ++dy)
+    {
+      for (int dz = -radius_voxels; dz <= radius_voxels; ++dz)
+      {
+        const VoxelKey key{center_key.x + dx, center_key.y + dy, center_key.z + dz};
+        const auto it = lookup.find(key);
+        if (it == lookup.end())
+        {
+          continue;
+        }
+        const auto& bucket = buckets[it->second];
+        points.insert(points.end(), bucket.points.begin(), bucket.points.end());
+      }
+    }
+  }
+  return points;
+}
+
+PrimitiveVoxelBucket MakeBucketFromPoints(
+  const std::vector<Eigen::Vector3d>& points,
+  const VoxelKey& key,
+  const Eigen::Vector3d& center)
+{
+  PrimitiveVoxelBucket bucket;
+  bucket.key = key;
+  bucket.center = center;
+  bucket.points = points;
+  return bucket;
+}
+
+ReferencePrimitive BuildReferencePrimitive(
+  const std::vector<Eigen::Vector3d>& reference_points,
+  const PrimitiveVoxelComparison& comparison,
+  const PrimitiveValidationConfig& config)
+{
+  const PrimitiveVoxelBucket bucket = MakeBucketFromPoints(reference_points, comparison.key, comparison.voxel_center);
+  ReferencePrimitive reference;
+  reference.stats = ComputePrimitiveStats(bucket);
+  reference.gaussian = FitGaussianPrimitive(bucket, reference.stats, config.gaussian_regularization);
+  reference.shell = FitSurfaceShellPrimitive(
+    bucket,
+    reference.stats,
+    config.shell_axis_scale_quantile,
+    config.shell_axis_scale_min,
+    config.shell_shape_exponent);
+  return reference;
+}
+
+std::vector<Eigen::Vector3d> TransformPoints(
+  const std::vector<Eigen::Vector3d>& points,
+  const Eigen::Vector3d& pivot,
+  const PerturbationSpec& perturbation)
+{
+  std::vector<Eigen::Vector3d> transformed;
+  transformed.reserve(points.size());
+
+  const bool use_rotation =
+    perturbation.rotation_radians > 0.0 &&
+    perturbation.rotation_axis.norm() > kEpsilon;
+  const Eigen::AngleAxisd rotation(
+    perturbation.rotation_radians,
+    use_rotation ? perturbation.rotation_axis.normalized() : Eigen::Vector3d::UnitX());
+
+  for (const auto& point : points)
+  {
+    Eigen::Vector3d current = point;
+    if (use_rotation)
+    {
+      current = pivot + rotation * (current - pivot);
+    }
+    current += perturbation.translation;
+    transformed.push_back(current);
+  }
+  return transformed;
+}
+
+double EvaluateGaussianQuickScore(
+  const std::vector<Eigen::Vector3d>& points,
+  const ReferencePrimitive& reference)
+{
+  double accum = 0.0;
+  for (const auto& point : points)
+  {
+    accum += std::sqrt(std::max(
+      MahalanobisSquared(point, reference.stats.mean, reference.gaussian.covariance_inverse),
+      0.0)) / std::sqrt(3.0);
+  }
+  return accum / static_cast<double>(std::max<std::size_t>(points.size(), 1));
+}
+
+double EvaluateShellQuickScore(
+  const std::vector<Eigen::Vector3d>& points,
+  const ReferencePrimitive& reference,
+  double shape_exponent)
+{
+  double accum = 0.0;
+  for (const auto& point : points)
+  {
+    const Eigen::Vector3d local =
+      reference.stats.eigenvectors.transpose() * (point - reference.stats.mean);
+    const double radius = ComputeLpRadius(local, reference.shell.axis_scales, shape_exponent);
+    accum += std::abs(radius - 1.0);
+  }
+  return accum / static_cast<double>(std::max<std::size_t>(points.size(), 1));
+}
+
+std::vector<PerturbationSpec> BuildPerturbations(
+  const ReferencePrimitive& reference,
+  const PrimitiveValidationConfig& config)
+{
+  const double translation_step = config.registration_translation_step_ratio * config.voxel_size;
+  const double rotation_radians = config.registration_rotation_degrees * kPi / 180.0;
+  const Eigen::Vector3d major_axis = reference.stats.eigenvectors.col(0).normalized();
+  const Eigen::Vector3d middle_axis = reference.stats.eigenvectors.col(1).normalized();
+  const Eigen::Vector3d normal_axis = reference.stats.eigenvectors.col(2).normalized();
+
+  return {
+    PerturbationSpec{"translate_normal", normal_axis * translation_step, Eigen::Vector3d::UnitZ(), 0.0},
+    PerturbationSpec{"translate_major", major_axis * translation_step, Eigen::Vector3d::UnitZ(), 0.0},
+    PerturbationSpec{"rotate_middle", Eigen::Vector3d::Zero(), middle_axis, rotation_radians}};
+}
+
+void AppendRegistrationQuickchecks(
+  std::vector<PrimitiveRegistrationQuickcheck>* output,
+  PrimitiveVoxelComparison* comparison,
+  const std::unordered_map<VoxelKey, std::size_t, VoxelKeyHash>& lookup,
+  const std::vector<PrimitiveVoxelBucket>& buckets,
+  const PrimitiveValidationConfig& config)
+{
+  std::vector<Eigen::Vector3d> local_points =
+    CollectNeighborhoodPoints(comparison->key, config.registration_neighborhood_voxels, lookup, buckets);
+  comparison->local_neighborhood_point_count = static_cast<int>(local_points.size());
+  if (static_cast<int>(local_points.size()) < config.registration_min_points)
+  {
+    return;
+  }
+
+  std::vector<Eigen::Vector3d> reference_points;
+  std::vector<Eigen::Vector3d> source_points;
+  reference_points.reserve((local_points.size() + 1) / 2);
+  source_points.reserve(local_points.size() / 2);
+
+  for (std::size_t index = 0; index < local_points.size(); ++index)
+  {
+    if (index % 2 == 0)
+    {
+      reference_points.push_back(local_points[index]);
+    }
+    else
+    {
+      source_points.push_back(local_points[index]);
+    }
+  }
+
+  if (
+    static_cast<int>(reference_points.size()) < config.registration_min_points / 2 ||
+    static_cast<int>(source_points.size()) < config.registration_min_points / 2)
+  {
+    return;
+  }
+
+  const ReferencePrimitive reference = BuildReferencePrimitive(reference_points, *comparison, config);
+  const double gaussian_nominal = EvaluateGaussianQuickScore(source_points, reference);
+  const double shell_nominal = EvaluateShellQuickScore(source_points, reference, config.shell_shape_exponent);
+  const std::vector<PerturbationSpec> perturbations = BuildPerturbations(reference, config);
+
+  for (const auto& perturbation : perturbations)
+  {
+    const std::vector<Eigen::Vector3d> transformed =
+      TransformPoints(source_points, reference.stats.mean, perturbation);
+    const double gaussian_perturbed = EvaluateGaussianQuickScore(transformed, reference);
+    const double shell_perturbed = EvaluateShellQuickScore(transformed, reference, config.shell_shape_exponent);
+
+    PrimitiveRegistrationQuickcheck quickcheck;
+    quickcheck.key = comparison->key;
+    quickcheck.voxel_id = VoxelId(comparison->key);
+    quickcheck.selection_tag = comparison->selection_tag;
+    quickcheck.base_label = comparison->base_label;
+    quickcheck.perturbation = perturbation.name;
+    quickcheck.neighborhood_point_count = static_cast<int>(local_points.size());
+    quickcheck.reference_point_count = static_cast<int>(reference_points.size());
+    quickcheck.source_point_count = static_cast<int>(source_points.size());
+    quickcheck.perturbation_translation_norm = perturbation.translation.norm();
+    quickcheck.perturbation_rotation_degrees = perturbation.rotation_radians * 180.0 / kPi;
+    quickcheck.gaussian_nominal_score = gaussian_nominal;
+    quickcheck.gaussian_perturbed_score = gaussian_perturbed;
+    quickcheck.gaussian_delta = gaussian_perturbed - gaussian_nominal;
+    quickcheck.shell_nominal_score = shell_nominal;
+    quickcheck.shell_perturbed_score = shell_perturbed;
+    quickcheck.shell_delta = shell_perturbed - shell_nominal;
+    quickcheck.delta_advantage = quickcheck.shell_delta - quickcheck.gaussian_delta;
+    quickcheck.shell_better_discrimination = quickcheck.delta_advantage > 0.0;
+    output->push_back(quickcheck);
+  }
 }
 
 void WriteLoadedFiles(const fs::path& output_dir, const std::vector<std::string>& loaded_files)
@@ -455,13 +750,15 @@ void WriteLoadedFiles(const fs::path& output_dir, const std::vector<std::string>
   }
 }
 
-void WriteSelectedVoxelsCsv(
+void WriteSelectedCasesCsv(
   const fs::path& output_dir,
   const std::vector<PrimitiveVoxelComparison>& comparisons)
 {
-  std::ofstream stream(output_dir / "selected_voxels.csv");
+  std::ofstream stream(output_dir / "selected_cases.csv");
   stream
-    << "voxel_id,key_x,key_y,key_z,selection_tag,base_label,point_count,selection_note\n";
+    << "voxel_id,key_x,key_y,key_z,selection_tag,base_label,point_count,local_neighborhood_point_count,"
+    << "selection_note,gaussian_normalized_residual_by_spread,shell_normalized_residual_by_spread,"
+    << "normalized_residual_gap\n";
   for (const auto& comparison : comparisons)
   {
     stream
@@ -472,7 +769,11 @@ void WriteSelectedVoxelsCsv(
       << comparison.selection_tag << ','
       << comparison.base_label << ','
       << comparison.point_count << ','
-      << comparison.selection_note << '\n';
+      << comparison.local_neighborhood_point_count << ','
+      << '"' << comparison.selection_note << '"' << ','
+      << FormatDouble(comparison.gaussian_normalized_residual_by_spread) << ','
+      << FormatDouble(comparison.shell_normalized_residual_by_spread) << ','
+      << FormatDouble(comparison.normalized_residual_gap) << '\n';
   }
 }
 
@@ -488,7 +789,12 @@ void WriteComparisonCsv(
     << "gaussian_average_center_distance,gaussian_condition_ratio,"
     << "surface_normal_rms,shell_average_residual,shell_voxel_center_residual,"
     << "shell_average_radius,shell_axis_scale_major,shell_axis_scale_middle,"
-    << "shell_axis_scale_minor,shell_axis_condition,sparsity_indicator,degenerate\n";
+    << "shell_axis_scale_minor,shell_axis_condition,sparsity_indicator,"
+    << "characteristic_spread_scale,shell_scale_mean,shell_geometric_average_residual,"
+    << "shell_geometric_center_residual,gaussian_normalized_residual_by_voxel,"
+    << "shell_normalized_residual_by_voxel,gaussian_normalized_residual_by_spread,"
+    << "shell_normalized_residual_by_spread,normalized_residual_gap,"
+    << "local_neighborhood_point_count,degenerate\n";
 
   for (const auto& comparison : comparisons)
   {
@@ -518,7 +824,86 @@ void WriteComparisonCsv(
       << FormatDouble(comparison.shell_axis_scales(2)) << ','
       << FormatDouble(comparison.shell_axis_condition) << ','
       << FormatDouble(comparison.sparsity_indicator) << ','
+      << FormatDouble(comparison.characteristic_spread_scale) << ','
+      << FormatDouble(comparison.shell_scale_mean) << ','
+      << FormatDouble(comparison.shell_geometric_average_residual) << ','
+      << FormatDouble(comparison.shell_geometric_center_residual) << ','
+      << FormatDouble(comparison.gaussian_normalized_residual_by_voxel) << ','
+      << FormatDouble(comparison.shell_normalized_residual_by_voxel) << ','
+      << FormatDouble(comparison.gaussian_normalized_residual_by_spread) << ','
+      << FormatDouble(comparison.shell_normalized_residual_by_spread) << ','
+      << FormatDouble(comparison.normalized_residual_gap) << ','
+      << comparison.local_neighborhood_point_count << ','
       << (comparison.degenerate ? "true" : "false") << '\n';
+  }
+}
+
+void WriteNormalizedComparisonCsv(
+  const fs::path& output_dir,
+  const std::vector<PrimitiveVoxelComparison>& comparisons)
+{
+  std::ofstream stream(output_dir / "voxel_comparison_normalized.csv");
+  stream
+    << "voxel_id,selection_tag,base_label,point_count,characteristic_spread_scale,"
+    << "gaussian_average_center_distance,shell_geometric_average_residual,"
+    << "gaussian_normalized_residual_by_voxel,shell_normalized_residual_by_voxel,"
+    << "gaussian_normalized_residual_by_spread,shell_normalized_residual_by_spread,"
+    << "normalized_residual_gap\n";
+
+  for (const auto& comparison : comparisons)
+  {
+    stream
+      << VoxelId(comparison.key) << ','
+      << comparison.selection_tag << ','
+      << comparison.base_label << ','
+      << comparison.point_count << ','
+      << FormatDouble(comparison.characteristic_spread_scale) << ','
+      << FormatDouble(comparison.gaussian_average_center_distance) << ','
+      << FormatDouble(comparison.shell_geometric_average_residual) << ','
+      << FormatDouble(comparison.gaussian_normalized_residual_by_voxel) << ','
+      << FormatDouble(comparison.shell_normalized_residual_by_voxel) << ','
+      << FormatDouble(comparison.gaussian_normalized_residual_by_spread) << ','
+      << FormatDouble(comparison.shell_normalized_residual_by_spread) << ','
+      << FormatDouble(comparison.normalized_residual_gap) << '\n';
+  }
+}
+
+void WriteRegistrationQuickcheckCsv(
+  const fs::path& output_dir,
+  const std::vector<PrimitiveRegistrationQuickcheck>& quickchecks)
+{
+  std::ofstream stream(output_dir / "registration_quickcheck.csv");
+  stream
+    << "voxel_id,key_x,key_y,key_z,selection_tag,base_label,perturbation,"
+    << "neighborhood_point_count,reference_point_count,source_point_count,"
+    << "perturbation_translation_norm,perturbation_rotation_degrees,"
+    << "gaussian_nominal_score,gaussian_perturbed_score,gaussian_delta,"
+    << "shell_nominal_score,shell_perturbed_score,shell_delta,delta_advantage,"
+    << "shell_better_discrimination\n";
+
+  for (const auto& quickcheck : quickchecks)
+  {
+    stream
+      << quickcheck.voxel_id << ','
+      << quickcheck.key.x << ','
+      << quickcheck.key.y << ','
+      << quickcheck.key.z << ','
+      << quickcheck.selection_tag << ','
+      << quickcheck.base_label << ','
+      << quickcheck.perturbation << ','
+      << quickcheck.neighborhood_point_count << ','
+      << quickcheck.reference_point_count << ','
+      << quickcheck.source_point_count << ','
+      << FormatDouble(quickcheck.perturbation_translation_norm) << ','
+      << FormatDouble(quickcheck.perturbation_rotation_degrees) << ','
+      << FormatDouble(quickcheck.gaussian_nominal_score) << ','
+      << FormatDouble(quickcheck.gaussian_perturbed_score) << ','
+      << FormatDouble(quickcheck.gaussian_delta) << ','
+      << FormatDouble(quickcheck.shell_nominal_score) << ','
+      << FormatDouble(quickcheck.shell_perturbed_score) << ','
+      << FormatDouble(quickcheck.shell_delta) << ','
+      << FormatDouble(quickcheck.delta_advantage) << ','
+      << (quickcheck.shell_better_discrimination ? "true" : "false") << '\n';
   }
 }
 
@@ -527,10 +912,10 @@ void WriteSummary(
   const PrimitiveValidationConfig& config,
   std::size_t input_points,
   const std::vector<std::string>& loaded_files,
-  const std::vector<PrimitiveVoxelComparison>& comparisons)
+  const PrimitiveValidationRun& run)
 {
   std::ofstream stream(output_dir / "summary.md");
-  stream << "# Direct Primitive Validation Stage-1\n\n";
+  stream << "# Direct Primitive Validation Stage-2 Quickcheck\n\n";
   stream << "- input_path: `" << config.input_path << "`\n";
   stream << "- output_dir: `" << config.output_dir << "`\n";
   stream << "- input_points: `" << input_points << "`\n";
@@ -540,72 +925,138 @@ void WriteSummary(
   stream << "- max_voxels: `" << config.max_voxels << "`\n";
   stream << "- per_category_limit: `" << config.per_category_limit << "`\n";
   stream << "- selection_mode: `" << config.selection_mode << "`\n";
+  stream << "- registration_neighborhood_voxels: `" << config.registration_neighborhood_voxels << "`\n";
+  stream << "- registration_translation_step_ratio: `" << config.registration_translation_step_ratio << "`\n";
+  stream << "- registration_rotation_degrees: `" << config.registration_rotation_degrees << "`\n";
   stream << "- gaussian_model: `mean/covariance baseline`\n";
   stream << "- surface_model: `PCA local frame + quantile axis scales + L_p shell scaffold`\n";
-  stream << "- note: Stage-1의 boundary/mixed category는 robust semantic label이 아니라 `linear` voxel proxy를 사용한다.\n\n";
+  stream << "- note: boundary/mixed category는 semantic relabel이 아니라 `linear` voxel proxy를 사용한다.\n\n";
 
-  struct Aggregate
+  stream << "## Normalization Definition\n\n";
+  stream << "- `characteristic_spread_scale = mean(sqrt(eigenvalues))`\n";
+  stream << "- `shell_geometric_average_residual = shell_average_residual * mean(shell_axis_scales)`\n";
+  stream << "- `gaussian_normalized_residual_by_spread = average_center_distance / characteristic_spread_scale`\n";
+  stream << "- `shell_normalized_residual_by_spread = shell_geometric_average_residual / characteristic_spread_scale`\n";
+  stream << "- shell 쪽 geometric residual은 exact point-to-surface distance가 아니라 `|r-1| * mean(axis_scales)` 기반 근사다.\n\n";
+
+  struct NormalizedAggregate
   {
     int count = 0;
-    double gaussian_average_mahalanobis2 = 0.0;
-    double gaussian_average_center_distance = 0.0;
-    double surface_normal_rms = 0.0;
-    double shell_average_residual = 0.0;
+    double gaussian_by_voxel = 0.0;
+    double shell_by_voxel = 0.0;
+    double gaussian_by_spread = 0.0;
+    double shell_by_spread = 0.0;
+    double gap = 0.0;
   };
 
-  std::unordered_map<std::string, Aggregate> aggregates;
-  for (const auto& comparison : comparisons)
+  std::unordered_map<std::string, NormalizedAggregate> normalized_aggregates;
+  for (const auto& comparison : run.comparisons)
   {
-    auto& aggregate = aggregates[comparison.selection_tag];
+    auto& aggregate = normalized_aggregates[comparison.selection_tag];
     ++aggregate.count;
-    aggregate.gaussian_average_mahalanobis2 += comparison.gaussian_average_mahalanobis2;
-    aggregate.gaussian_average_center_distance += comparison.gaussian_average_center_distance;
-    aggregate.surface_normal_rms += comparison.surface_normal_rms;
-    aggregate.shell_average_residual += comparison.shell_average_residual;
+    aggregate.gaussian_by_voxel += comparison.gaussian_normalized_residual_by_voxel;
+    aggregate.shell_by_voxel += comparison.shell_normalized_residual_by_voxel;
+    aggregate.gaussian_by_spread += comparison.gaussian_normalized_residual_by_spread;
+    aggregate.shell_by_spread += comparison.shell_normalized_residual_by_spread;
+    aggregate.gap += comparison.normalized_residual_gap;
   }
 
-  stream << "## Category Means\n\n";
-  stream << "| selection_tag | count | gaussian_avg_mahalanobis2 | gaussian_avg_center_distance | surface_normal_rms | shell_average_residual |\n";
-  stream << "| --- | ---: | ---: | ---: | ---: | ---: |\n";
-
+  stream << "## Normalized Comparison Means\n\n";
+  stream << "| selection_tag | count | gaussian_by_voxel | shell_by_voxel | gaussian_by_spread | shell_by_spread | gaussian_minus_shell |\n";
+  stream << "| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n";
   std::vector<std::string> ordered_tags;
-  ordered_tags.reserve(aggregates.size());
-  for (const auto& item : aggregates)
+  ordered_tags.reserve(normalized_aggregates.size());
+  for (const auto& item : normalized_aggregates)
   {
     ordered_tags.push_back(item.first);
   }
   std::sort(ordered_tags.begin(), ordered_tags.end());
   for (const auto& tag : ordered_tags)
   {
-    const auto& aggregate = aggregates.at(tag);
+    const auto& aggregate = normalized_aggregates.at(tag);
     const double denom = static_cast<double>(std::max(aggregate.count, 1));
     stream
       << "| " << tag
       << " | " << aggregate.count
-      << " | " << FormatDouble(aggregate.gaussian_average_mahalanobis2 / denom)
-      << " | " << FormatDouble(aggregate.gaussian_average_center_distance / denom)
-      << " | " << FormatDouble(aggregate.surface_normal_rms / denom)
-      << " | " << FormatDouble(aggregate.shell_average_residual / denom)
+      << " | " << FormatDouble(aggregate.gaussian_by_voxel / denom)
+      << " | " << FormatDouble(aggregate.shell_by_voxel / denom)
+      << " | " << FormatDouble(aggregate.gaussian_by_spread / denom)
+      << " | " << FormatDouble(aggregate.shell_by_spread / denom)
+      << " | " << FormatDouble(aggregate.gap / denom)
       << " |\n";
   }
 
-  stream << "\n## Selected Voxels\n\n";
-  for (const auto& comparison : comparisons)
+  struct QuickAggregate
+  {
+    int count = 0;
+    double gaussian_delta = 0.0;
+    double shell_delta = 0.0;
+    double advantage = 0.0;
+    int shell_better = 0;
+  };
+
+  std::unordered_map<std::string, QuickAggregate> quick_aggregates;
+  for (const auto& quickcheck : run.registration_quickchecks)
+  {
+    const std::string key = quickcheck.selection_tag + "|" + quickcheck.perturbation;
+    auto& aggregate = quick_aggregates[key];
+    ++aggregate.count;
+    aggregate.gaussian_delta += quickcheck.gaussian_delta;
+    aggregate.shell_delta += quickcheck.shell_delta;
+    aggregate.advantage += quickcheck.delta_advantage;
+    if (quickcheck.shell_better_discrimination)
+    {
+      ++aggregate.shell_better;
+    }
+  }
+
+  stream << "\n## Registration Quickcheck Means\n\n";
+  stream << "| selection_tag | perturbation | cases | gaussian_delta | shell_delta | shell_minus_gaussian | shell_better_cases |\n";
+  stream << "| --- | --- | ---: | ---: | ---: | ---: | ---: |\n";
+  std::vector<std::string> ordered_quick_keys;
+  ordered_quick_keys.reserve(quick_aggregates.size());
+  for (const auto& item : quick_aggregates)
+  {
+    ordered_quick_keys.push_back(item.first);
+  }
+  std::sort(ordered_quick_keys.begin(), ordered_quick_keys.end());
+  for (const auto& key : ordered_quick_keys)
+  {
+    const auto separator = key.find('|');
+    const std::string selection_tag = key.substr(0, separator);
+    const std::string perturbation = key.substr(separator + 1);
+    const auto& aggregate = quick_aggregates.at(key);
+    const double denom = static_cast<double>(std::max(aggregate.count, 1));
+    stream
+      << "| " << selection_tag
+      << " | " << perturbation
+      << " | " << aggregate.count
+      << " | " << FormatDouble(aggregate.gaussian_delta / denom)
+      << " | " << FormatDouble(aggregate.shell_delta / denom)
+      << " | " << FormatDouble(aggregate.advantage / denom)
+      << " | " << aggregate.shell_better
+      << " |\n";
+  }
+
+  stream << "\n## Selected Cases\n\n";
+  for (const auto& comparison : run.comparisons)
   {
     stream
       << "- `" << VoxelId(comparison.key) << "`"
       << " | " << comparison.selection_tag
       << " | base_label=`" << comparison.base_label << "`"
       << " | points=`" << comparison.point_count << "`"
-      << " | gaussian_avg_mahalanobis2=`" << FormatDouble(comparison.gaussian_average_mahalanobis2) << "`"
-      << " | shell_average_residual=`" << FormatDouble(comparison.shell_average_residual) << "`"
-      << " | surface_normal_rms=`" << FormatDouble(comparison.surface_normal_rms) << "`\n";
+      << " | neighborhood_points=`" << comparison.local_neighborhood_point_count << "`"
+      << " | gaussian_by_spread=`" << FormatDouble(comparison.gaussian_normalized_residual_by_spread) << "`"
+      << " | shell_by_spread=`" << FormatDouble(comparison.shell_normalized_residual_by_spread) << "`"
+      << " | gap=`" << FormatDouble(comparison.normalized_residual_gap) << "`\n";
   }
 
   stream << "\n## Interpretation Guardrails\n\n";
-  stream << "- 이 출력은 Stage-1 scaffold다. exact GES/GND fitting이나 registration 성능을 아직 주장하지 않는다.\n";
-  stream << "- gaussian residual과 shell residual은 scale이 다를 수 있으므로, 현재 단계에서는 직접적인 승패 선언보다 category별 경향 확인에 사용한다.\n";
-  stream << "- 다음 단계는 voxel-level residual normalization 검토와 local registration residual 비교다.\n";
+  stream << "- 이 quickcheck는 exact GES/GND fitting이 아니라 surface-shell proxy와 Gaussian baseline의 초기 분별력 검사용이다.\n";
+  stream << "- registration quickcheck는 local neighborhood를 reference/source로 deterministic split한 뒤 nominal/perturbed score 변화를 보는 소규모 offline benchmark다.\n";
+  stream << "- quickcheck score는 model-internal normalized residual이므로, full registration accuracy나 SLAM 성능을 아직 주장하지 않는다.\n";
+  stream << "- shell 모델이 promising하다고 보려면 normalized residual에서 category별 이득이 반복되고, perturbation delta에서도 shell 쪽 분별력이 일관되게 커야 한다.\n";
 }
 
 }  // namespace
@@ -620,7 +1071,7 @@ PointCloud::Ptr LoadPrimitiveValidationCloud(
   return LoadInputCloud(load_config, loaded_files);
 }
 
-std::vector<PrimitiveVoxelComparison> RunDirectPrimitiveValidation(
+PrimitiveValidationRun RunDirectPrimitiveValidation(
   const PointCloud& cloud,
   const PrimitiveValidationConfig& config)
 {
@@ -640,22 +1091,46 @@ std::vector<PrimitiveVoxelComparison> RunDirectPrimitiveValidation(
     bucket.points.push_back(eigen_point);
   }
 
-  std::vector<PrimitiveVoxelComparison> all_voxels;
-  all_voxels.reserve(voxel_map.size());
-
+  std::vector<PrimitiveVoxelBucket> buckets;
+  buckets.reserve(voxel_map.size());
   for (const auto& item : voxel_map)
   {
-    const PrimitiveVoxelBucket& bucket = item.second;
+    buckets.push_back(item.second);
+  }
+  std::sort(
+    buckets.begin(),
+    buckets.end(),
+    [](const PrimitiveVoxelBucket& lhs, const PrimitiveVoxelBucket& rhs)
+    {
+      return VoxelKeyLess(lhs.key, rhs.key);
+    });
+
+  std::unordered_map<VoxelKey, std::size_t, VoxelKeyHash> lookup;
+  lookup.reserve(buckets.size());
+  for (std::size_t index = 0; index < buckets.size(); ++index)
+  {
+    lookup[buckets[index].key] = index;
+  }
+
+  std::vector<PrimitiveModelBundle> all_models;
+  all_models.reserve(buckets.size());
+  std::vector<PrimitiveVoxelComparison> all_comparisons;
+  all_comparisons.reserve(buckets.size());
+
+  for (const auto& bucket : buckets)
+  {
     if (static_cast<int>(bucket.points.size()) < config.min_points_per_voxel)
     {
       continue;
     }
 
-    const PrimitiveStats stats = ComputePrimitiveStats(bucket);
-    const GaussianFit gaussian = FitGaussianPrimitive(bucket, stats, config.gaussian_regularization);
-    const SurfaceShellFit shell = FitSurfaceShellPrimitive(
+    PrimitiveModelBundle model;
+    model.bucket = bucket;
+    model.stats = ComputePrimitiveStats(bucket);
+    model.gaussian = FitGaussianPrimitive(bucket, model.stats, config.gaussian_regularization);
+    model.shell = FitSurfaceShellPrimitive(
       bucket,
-      stats,
+      model.stats,
       config.shell_axis_scale_quantile,
       config.shell_axis_scale_min,
       config.shell_shape_exponent);
@@ -663,61 +1138,56 @@ std::vector<PrimitiveVoxelComparison> RunDirectPrimitiveValidation(
     PrimitiveVoxelComparison comparison;
     comparison.key = bucket.key;
     comparison.voxel_center = bucket.center;
-    comparison.mean = stats.mean;
-    comparison.eigenvalues = stats.eigenvalues;
-    comparison.point_count = stats.num_points;
-    comparison.base_label = stats.label;
-    comparison.linearity = stats.linearity;
-    comparison.planarity = stats.planarity;
-    comparison.scattering = stats.scattering;
-    comparison.anisotropy = stats.anisotropy;
-    comparison.omnivariance = stats.omnivariance;
-    comparison.gaussian_average_mahalanobis2 = gaussian.average_mahalanobis2;
-    comparison.gaussian_voxel_center_mahalanobis2 = gaussian.voxel_center_mahalanobis2;
-    comparison.gaussian_average_center_distance = gaussian.average_center_distance;
-    comparison.gaussian_condition_ratio = gaussian.condition_ratio;
-    comparison.surface_normal_rms = shell.normal_rms;
-    comparison.shell_average_residual = shell.average_shell_residual;
-    comparison.shell_voxel_center_residual = shell.voxel_center_shell_residual;
-    comparison.shell_average_radius = shell.average_radius;
-    comparison.shell_axis_scales = shell.axis_scales;
-    comparison.shell_axis_condition = shell.axis_condition;
+    comparison.mean = model.stats.mean;
+    comparison.eigenvalues = model.stats.eigenvalues;
+    comparison.point_count = model.stats.num_points;
+    comparison.base_label = model.stats.label;
+    comparison.linearity = model.stats.linearity;
+    comparison.planarity = model.stats.planarity;
+    comparison.scattering = model.stats.scattering;
+    comparison.anisotropy = model.stats.anisotropy;
+    comparison.omnivariance = model.stats.omnivariance;
+    comparison.gaussian_average_mahalanobis2 = model.gaussian.average_mahalanobis2;
+    comparison.gaussian_voxel_center_mahalanobis2 = model.gaussian.voxel_center_mahalanobis2;
+    comparison.gaussian_average_center_distance = model.gaussian.average_center_distance;
+    comparison.gaussian_condition_ratio = model.gaussian.condition_ratio;
+    comparison.surface_normal_rms = model.shell.normal_rms;
+    comparison.shell_average_residual = model.shell.average_shell_residual;
+    comparison.shell_voxel_center_residual = model.shell.voxel_center_shell_residual;
+    comparison.shell_average_radius = model.shell.average_radius;
+    comparison.shell_axis_scales = model.shell.axis_scales;
+    comparison.shell_axis_condition = model.shell.axis_condition;
     comparison.sparsity_indicator =
       1.0 / std::sqrt(static_cast<double>(std::max<std::size_t>(comparison.point_count, 1)));
-    comparison.degenerate = stats.degenerate;
-    all_voxels.push_back(comparison);
+    comparison.degenerate = model.stats.degenerate;
+    FillNormalizedMetrics(&comparison, model.stats, model.shell, config.voxel_size);
+
+    model.comparison = comparison;
+    all_models.push_back(model);
+    all_comparisons.push_back(comparison);
   }
 
-  const std::vector<std::size_t> selected_indices = SelectCandidateIndices(all_voxels, config);
-  std::vector<PrimitiveVoxelComparison> selected;
-  selected.reserve(selected_indices.size());
+  const std::vector<std::size_t> selected_indices = SelectCandidateIndices(all_comparisons, config);
+  PrimitiveValidationRun run;
+  run.comparisons.reserve(selected_indices.size());
 
   for (const std::size_t index : selected_indices)
   {
-    PrimitiveVoxelComparison comparison = all_voxels[index];
-    if (comparison.base_label == "planar")
-    {
-      comparison.selection_tag = "planar_candidate";
-    }
-    else if (comparison.base_label == "corner_like")
-    {
-      comparison.selection_tag = "corner_candidate";
-    }
-    else if (comparison.base_label == "linear")
-    {
-      comparison.selection_tag = "boundary_candidate_proxy";
-    }
-    else
-    {
-      comparison.selection_tag = "fallback_candidate";
-    }
+    PrimitiveVoxelComparison comparison = all_models[index].comparison;
+    comparison.selection_tag = SelectionTagFromBaseLabel(comparison.base_label);
     comparison.selection_note = SelectionNote(comparison);
-    selected.push_back(comparison);
+    AppendRegistrationQuickchecks(
+      &run.registration_quickchecks,
+      &comparison,
+      lookup,
+      buckets,
+      config);
+    run.comparisons.push_back(comparison);
   }
 
   std::sort(
-    selected.begin(),
-    selected.end(),
+    run.comparisons.begin(),
+    run.comparisons.end(),
     [](const PrimitiveVoxelComparison& lhs, const PrimitiveVoxelComparison& rhs)
     {
       if (lhs.selection_tag != rhs.selection_tag)
@@ -731,11 +1201,27 @@ std::vector<PrimitiveVoxelComparison> RunDirectPrimitiveValidation(
       return VoxelId(lhs.key) < VoxelId(rhs.key);
     });
 
-  return selected;
+  std::sort(
+    run.registration_quickchecks.begin(),
+    run.registration_quickchecks.end(),
+    [](const PrimitiveRegistrationQuickcheck& lhs, const PrimitiveRegistrationQuickcheck& rhs)
+    {
+      if (lhs.selection_tag != rhs.selection_tag)
+      {
+        return lhs.selection_tag < rhs.selection_tag;
+      }
+      if (lhs.voxel_id != rhs.voxel_id)
+      {
+        return lhs.voxel_id < rhs.voxel_id;
+      }
+      return lhs.perturbation < rhs.perturbation;
+    });
+
+  return run;
 }
 
 void SaveDirectPrimitiveValidationResults(
-  const std::vector<PrimitiveVoxelComparison>& comparisons,
+  const PrimitiveValidationRun& run,
   const PrimitiveValidationConfig& config,
   std::size_t input_points,
   const std::vector<std::string>& loaded_files)
@@ -744,9 +1230,11 @@ void SaveDirectPrimitiveValidationResults(
   fs::create_directories(output_dir);
 
   WriteLoadedFiles(output_dir, loaded_files);
-  WriteSelectedVoxelsCsv(output_dir, comparisons);
-  WriteComparisonCsv(output_dir, comparisons);
-  WriteSummary(output_dir, config, input_points, loaded_files, comparisons);
+  WriteSelectedCasesCsv(output_dir, run.comparisons);
+  WriteComparisonCsv(output_dir, run.comparisons);
+  WriteNormalizedComparisonCsv(output_dir, run.comparisons);
+  WriteRegistrationQuickcheckCsv(output_dir, run.registration_quickchecks);
+  WriteSummary(output_dir, config, input_points, loaded_files, run);
 }
 
 }  // namespace ges_voxel_mapping

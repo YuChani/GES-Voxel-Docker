@@ -1,0 +1,13 @@
+voxel_id,selection_tag,base_label,point_count,characteristic_spread_scale,gaussian_average_center_distance,shell_geometric_average_residual,gaussian_normalized_residual_by_voxel,shell_normalized_residual_by_voxel,gaussian_normalized_residual_by_spread,shell_normalized_residual_by_spread,normalized_residual_gap
+-4_-10_6,boundary_candidate_proxy,linear,31,0.105020,0.260550,0.071132,0.260550,0.071132,2.480964,0.677319,1.803644
+2_15_-2,boundary_candidate_proxy,linear,21,0.101959,0.252653,0.066705,0.252653,0.066705,2.477980,0.654227,1.823754
+2_-9_4,boundary_candidate_proxy,linear,20,0.109703,0.294235,0.040452,0.294235,0.040452,2.682111,0.368745,2.313366
+1_-9_4,boundary_candidate_proxy,linear,16,0.049078,0.116983,0.047222,0.116983,0.047222,2.383596,0.962174,1.421422
+6_0_2,corner_candidate,corner_like,147,0.231562,0.394438,0.242294,0.394438,0.242294,1.703379,1.046346,0.657033
+6_-1_2,corner_candidate,corner_like,141,0.222955,0.381956,0.221727,0.381956,0.221727,1.713154,0.994494,0.718660
+3_-5_4,corner_candidate,corner_like,96,0.209442,0.347537,0.235532,0.347537,0.235532,1.659343,1.124568,0.534775
+6_14_1,corner_candidate,corner_like,26,0.252187,0.413059,0.267717,0.413059,0.267717,1.637908,1.061580,0.576328
+1_-2_-2,planar_candidate,planar,1447,0.189792,0.371896,0.103594,0.371896,0.103594,1.959498,0.545830,1.413668
+0_2_-2,planar_candidate,planar,917,0.191926,0.377025,0.118724,0.377025,0.118724,1.964427,0.618594,1.345833
+-2_-3_-2,planar_candidate,planar,644,0.192328,0.377956,0.119270,0.377956,0.119270,1.965166,0.620142,1.345024
+6_2_3,planar_candidate,planar,170,0.199378,0.383631,0.162696,0.383631,0.162696,1.924136,0.816015,1.108121

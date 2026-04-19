@@ -32,7 +32,9 @@ void PrintUsage()
     << "Usage: voxel_primitive_comparison --input <pcd|dir> [--output <dir>]\n"
     << "       [--voxel-size <float>] [--min-points-per-voxel <int>] [--max-points <int>]\n"
     << "       [--max-voxels <int>] [--per-category-limit <int>] [--selection-mode auto_small]\n"
-    << "       [--shell-shape-exponent <float>] [--shell-axis-scale-quantile <float>]\n";
+    << "       [--shell-shape-exponent <float>] [--shell-axis-scale-quantile <float>]\n"
+    << "       [--registration-neighborhood-voxels <int>] [--registration-min-points <int>]\n"
+    << "       [--registration-translation-step-ratio <float>] [--registration-rotation-degrees <float>]\n";
 }
 
 }  // namespace
@@ -111,6 +113,26 @@ int main(int argc, char** argv)
         config.shell_shape_exponent = std::stod(argv[++index]);
         continue;
       }
+      if (arg == "--registration-neighborhood-voxels" && index + 1 < argc)
+      {
+        config.registration_neighborhood_voxels = std::stoi(argv[++index]);
+        continue;
+      }
+      if (arg == "--registration-min-points" && index + 1 < argc)
+      {
+        config.registration_min_points = std::stoi(argv[++index]);
+        continue;
+      }
+      if (arg == "--registration-translation-step-ratio" && index + 1 < argc)
+      {
+        config.registration_translation_step_ratio = std::stod(argv[++index]);
+        continue;
+      }
+      if (arg == "--registration-rotation-degrees" && index + 1 < argc)
+      {
+        config.registration_rotation_degrees = std::stod(argv[++index]);
+        continue;
+      }
 
       throw std::runtime_error("Unknown or incomplete argument: " + arg);
     }
@@ -129,21 +151,30 @@ int main(int argc, char** argv)
     {
       throw std::runtime_error("min_points_per_voxel must be >= 3.");
     }
+    if (config.registration_neighborhood_voxels < 0)
+    {
+      throw std::runtime_error("registration_neighborhood_voxels must be >= 0.");
+    }
+    if (config.registration_min_points < 6)
+    {
+      throw std::runtime_error("registration_min_points must be >= 6.");
+    }
 
     std::vector<std::string> loaded_files;
     const ges_voxel_mapping::PointCloud::Ptr cloud =
       ges_voxel_mapping::LoadPrimitiveValidationCloud(config, &loaded_files);
-    const std::vector<ges_voxel_mapping::PrimitiveVoxelComparison> comparisons =
+    const ges_voxel_mapping::PrimitiveValidationRun run =
       ges_voxel_mapping::RunDirectPrimitiveValidation(*cloud, config);
     ges_voxel_mapping::SaveDirectPrimitiveValidationResults(
-      comparisons,
+      run,
       config,
       cloud->size(),
       loaded_files);
 
     std::cout << "[done] input=" << config.input_path
               << " points=" << cloud->size()
-              << " selected_voxels=" << comparisons.size()
+              << " selected_voxels=" << run.comparisons.size()
+              << " quickchecks=" << run.registration_quickchecks.size()
               << " output=" << config.output_dir << '\n';
     return 0;
   }

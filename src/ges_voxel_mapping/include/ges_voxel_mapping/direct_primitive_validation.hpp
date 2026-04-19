@@ -23,6 +23,10 @@ struct PrimitiveValidationConfig
   double shell_axis_scale_min = 0.05;
   double shell_shape_exponent = 1.0;
   std::string selection_mode = "auto_small";
+  int registration_neighborhood_voxels = 1;
+  int registration_min_points = 24;
+  double registration_translation_step_ratio = 0.10;
+  double registration_rotation_degrees = 5.0;
 };
 
 struct PrimitiveVoxelComparison
@@ -50,20 +54,58 @@ struct PrimitiveVoxelComparison
   double shell_average_radius = 0.0;
   Eigen::Vector3d shell_axis_scales = Eigen::Vector3d::Zero();
   double shell_axis_condition = 0.0;
+  double characteristic_spread_scale = 0.0;
+  double shell_scale_mean = 0.0;
+  double shell_geometric_average_residual = 0.0;
+  double shell_geometric_center_residual = 0.0;
+  double gaussian_normalized_residual_by_voxel = 0.0;
+  double shell_normalized_residual_by_voxel = 0.0;
+  double gaussian_normalized_residual_by_spread = 0.0;
+  double shell_normalized_residual_by_spread = 0.0;
+  double normalized_residual_gap = 0.0;
   double sparsity_indicator = 0.0;
+  int local_neighborhood_point_count = 0;
   bool degenerate = false;
+};
+
+struct PrimitiveRegistrationQuickcheck
+{
+  VoxelKey key;
+  std::string voxel_id;
+  std::string selection_tag;
+  std::string base_label;
+  std::string perturbation;
+  int neighborhood_point_count = 0;
+  int reference_point_count = 0;
+  int source_point_count = 0;
+  double perturbation_translation_norm = 0.0;
+  double perturbation_rotation_degrees = 0.0;
+  double gaussian_nominal_score = 0.0;
+  double gaussian_perturbed_score = 0.0;
+  double gaussian_delta = 0.0;
+  double shell_nominal_score = 0.0;
+  double shell_perturbed_score = 0.0;
+  double shell_delta = 0.0;
+  double delta_advantage = 0.0;
+  bool shell_better_discrimination = false;
+};
+
+struct PrimitiveValidationRun
+{
+  std::vector<PrimitiveVoxelComparison> comparisons;
+  std::vector<PrimitiveRegistrationQuickcheck> registration_quickchecks;
 };
 
 PointCloud::Ptr LoadPrimitiveValidationCloud(
   const PrimitiveValidationConfig& config,
   std::vector<std::string>* loaded_files);
 
-std::vector<PrimitiveVoxelComparison> RunDirectPrimitiveValidation(
+PrimitiveValidationRun RunDirectPrimitiveValidation(
   const PointCloud& cloud,
   const PrimitiveValidationConfig& config);
 
 void SaveDirectPrimitiveValidationResults(
-  const std::vector<PrimitiveVoxelComparison>& comparisons,
+  const PrimitiveValidationRun& run,
   const PrimitiveValidationConfig& config,
   std::size_t input_points,
   const std::vector<std::string>& loaded_files);

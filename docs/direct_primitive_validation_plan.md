@@ -28,20 +28,37 @@
 - sparsity / degeneracy indicator
 - coarse category tag
 
+현재 구현 상태:
+
+- 완료: representative voxel set에 대한 raw residual export
+- 완료: residual normalization quickcheck
+- 제한: shell 쪽은 아직 exact GES/GND fitting이 아니라 `PCA + quantile scale + L_p shell` proxy다.
+
 ## Stage 2: local registration residual comparison
 
-Stage-1에서 surface primitive가 적어도 일부 voxel category에서
-일관된 residual advantage를 보일 때만 진행한다.
+빠른 Stage-2는 full registration이 아니라 small offline quickcheck로 정의한다.
 
 예상 범위:
 
-- local patch-to-patch residual 비교
-- frame-to-local-map residual heatmap
-- primitive residual normalization 검토
+- local neighborhood를 deterministic reference/source split으로 분리
+- nominal vs small perturbation에서 model score delta 비교
+- translation / small rotation perturbation에 대한 분별력 비교
+
+현재 구현 상태:
+
+- 완료: selected voxel neighborhood quickcheck
+- 출력:
+  - `voxel_comparison_normalized.csv`
+  - `registration_quickcheck.csv`
+  - `selected_cases.csv`
+- 아직 미완료:
+  - multi-frame registration benchmark
+  - frame-to-local-map residual heatmap
+  - exact primitive optimization
 
 ## Stage 3: system integration
 
-Stage-1과 Stage-2가 모두 설득력 있을 때만 고려한다.
+Stage-1과 quick Stage-2가 모두 설득력 있을 때만 고려한다.
 
 예상 범위:
 

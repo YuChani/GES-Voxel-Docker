@@ -67,16 +67,19 @@
     - `results/context_refinement_scored_review/relabeled_review_summary.csv`
     - `results/context_refinement_scored_review/relabeled_review_summary.md`
 - `voxel_primitive_comparison`
-  - direct primitive validation Stage-1용 C++ offline executable
+  - direct primitive validation Stage-1/quick Stage-2용 C++ offline executable
   - Gaussian/NDT-style center fit과 surface-shell scaffold를 같은 voxel set에서 비교
+  - normalized residual과 local registration-style quickcheck도 함께 export
   - output:
     - `results/direct_primitive_validation/<run>/summary.md`
-    - `results/direct_primitive_validation/<run>/selected_voxels.csv`
+    - `results/direct_primitive_validation/<run>/selected_cases.csv`
     - `results/direct_primitive_validation/<run>/voxel_comparison.csv`
+    - `results/direct_primitive_validation/<run>/voxel_comparison_normalized.csv`
+    - `results/direct_primitive_validation/<run>/registration_quickcheck.csv`
     - `results/direct_primitive_validation/<run>/loaded_files.txt`
 - `scripts/run_direct_primitive_validation.py`
   - `voxel_primitive_comparison` wrapper
-  - small representative voxel set dry-run 실행용
+  - small representative voxel set quickcheck 실행용
 
 ## 현재 primitive 구현 수준
 
@@ -343,28 +346,33 @@ python3 ./scripts/build_final_manual_review_package.py \
 기본적으로 Open3D headless offscreen 렌더를 먼저 시도하고, 현재 환경에서 불가능하면
 deterministic projection PNG로 자동 fallback 합니다.
 
-direct primitive validation Stage-1 dry-run:
+direct primitive validation quickcheck:
 
 ```bash
 ./scripts/build_offline.sh
 python3 ./scripts/run_direct_primitive_validation.py \
   --input ./prev/BALM/datas/benchmark_realworld/full0.pcd \
   --output-root ./results/direct_primitive_validation \
-  --run-name full0_stage1 \
+  --run-name full0_stage2_quickcheck \
   --voxel-size 1.0 \
   --min-points-per-voxel 15 \
   --max-voxels 12 \
   --per-category-limit 4 \
   --shell-shape-exponent 1.0 \
-  --shell-axis-scale-quantile 0.90
+  --shell-axis-scale-quantile 0.90 \
+  --registration-neighborhood-voxels 1 \
+  --registration-min-points 24 \
+  --registration-translation-step-ratio 0.10 \
+  --registration-rotation-degrees 5.0
 ```
 
-이 Stage-1은 exact GES/GND 구현이 아니라 다음 proxy scaffold다.
+이 quickcheck는 exact GES/GND 구현이 아니라 다음 proxy scaffold다.
 
 1. 기존 offline PCD loader 재사용
 2. voxel별 Gaussian/NDT-style mean/covariance baseline 계산
 3. PCA local frame + quantile axis scale + `L_p` shell residual로 surface primitive proxy 계산
-4. small representative voxel set에서 두 residual family를 같은 CSV/summary 포맷으로 export
+4. raw residual과 normalized residual을 같이 export
+5. selected local neighborhood에서 nominal / perturbed score delta를 비교하는 registration-style quickcheck 수행
 
 ## ranking/filter mode
 
